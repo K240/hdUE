@@ -1,0 +1,9 @@
+{
+  "Plugins": [{
+    "Name": "@HDUE_PLUGIN_NAME@", "Type": "library", "Root": "..",
+    "LibraryPath": "@HDUE_PLUGIN_LIBRARY@", "ResourcePath": "resources",
+    "Info": { "Types": { "@HDUE_PLUGIN_TYPE@": {
+      "bases": ["HdRendererPlugin"], "displayName": "Unreal Engine (hdUE)", "priority": 0
+    } } }
+  }]
+}

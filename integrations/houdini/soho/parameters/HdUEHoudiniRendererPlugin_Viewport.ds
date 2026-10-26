@@ -1,0 +1,41 @@
+#include "$HFS/houdini/soho/parameters/CommonMacros.ds"
+{
+    name "hdUE"
+    label "Unreal Engine"
+    parmtag { spare_opfilter "!!SHOP/PROPERTIES!!" }
+    parmtag { spare_classtags "render" }
+    parm {
+        name "xn__hdUErenderMode_tya"
+        label "Render mode"
+        type string
+        size 1
+        default { "realtime" }
+        menu { "realtime" "Lumen" "pathtraced" "Path Tracer" }
+        parmtag { "uiscope" "viewport" }
+    }
+    parm {
+        name "xn__hdUEsamplesPerPixel_y6a"
+        label "Path Tracer samples"
+        type int
+        size 1
+        default { 64 }
+        range { 1! 4096 }
+        parmtag { "uiscope" "viewport" }
+    }
+    parm {
+        name "xn__hdUElumenEnabled_21a"
+        label "Enable Lumen"
+        type toggle
+        size 1
+        default { 1 }
+        parmtag { "uiscope" "viewport" }
+    }
+    parm {
+        name "xn__hdUEautoViewerLight_y6a"
+        label "Light unlit scenes"
+        type toggle
+        size 1
+        default { 1 }
+        parmtag { "uiscope" "viewport" }
+    }
+}

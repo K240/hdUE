@@ -1,0 +1,19 @@
+{
+  "HdUEHoudiniRendererPlugin": {
+    "valid": "env:HDUE_HOUDINI_ENABLE",
+    "menulabel": "Unreal Engine (hdUE)",
+    "menupriority": 30,
+    "allowbackgroundupdate": false,
+    "viewportrenderer": false,
+    "destroyifdeactivated": true,
+    "pauseonupdate": false,
+    "defaultpurposes": ["default", "render"],
+    "drawmodesupport": false,
+    "needsdepth": false,
+    "needsselection": true,
+    "depthstyle": "linear",
+    "aovsupport": true,
+    "statsdatapaths": {"rendererStage": "error", "totalClockTime": "requestToFrameMs"},
+    "viewstats": ["nativeActors", "nativeMeshes", "completedSamples"]
+  }
+}

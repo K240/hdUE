@@ -1,0 +1,29 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "",
+  "DisableEnginePluginsByDefault": true,
+  "Description": "In-process Unreal backend for the hdUE Hydra delegate",
+  "Modules": [
+    { "Name": "HdUEBackend", "Type": "Runtime", "LoadingPhase": "Default" },
+    { "Name": "HdUEContent", "Type": "Editor", "LoadingPhase": "Default" }
+  ],
+  "Plugins": [
+    { "Name": "Interchange", "Enabled": true, "TargetAllowList": ["Editor"] },
+    { "Name": "InterchangeEditor", "Enabled": true, "TargetAllowList": ["Editor"] },
+    { "Name": "InterchangeAssets", "Enabled": true },
+    { "Name": "AnimationData", "Enabled": true, "TargetAllowList": ["Editor"] },
+    { "Name": "MetaHumanCharacter", "Enabled": true, "TargetAllowList": ["Editor"] },
+    { "Name": "MetaHumanCoreTech", "Enabled": true, "TargetAllowList": ["Editor"] },
+    { "Name": "MetaHumanSDK", "Enabled": true },
+    { "Name": "LiveLink", "Enabled": true },
+    { "Name": "FullBodyIK", "Enabled": true },
+    { "Name": "ControlRigSpline", "Enabled": true },
+    { "Name": "AnimationWarping", "Enabled": true },
+    { "Name": "ACLPlugin", "Enabled": true },
+    { "Name": "DatasmithContent", "Enabled": true },
+    { "Name": "USDImporter", "Enabled": false },
+    { "Name": "USDCore", "Enabled": false },
+    { "Name": "PythonScriptPlugin", "Enabled": false }
+  ]
+}
+

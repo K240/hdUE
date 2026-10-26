@@ -1,0 +1,62 @@
+<?xml version='1.0' encoding='utf-8'?>
+<materialx version="1.39" colorspace="lin_rec709">
+  <standard_surface name="SS_Metal_surface" type="surfaceshader">
+    <input name="base" type="float" value="0.9" />
+    <input name="base_color" type="color3" value="0.7, 0.27, 0.07" />
+    <input name="metalness" type="float" value="0.95" />
+    <input name="specular_roughness" type="float" value="0.32" />
+  </standard_surface>
+  <surfacematerial name="SS_Metal" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="SS_Metal_surface" />
+  </surfacematerial>
+  <standard_surface name="SS_Coat_surface" type="surfaceshader">
+    <input name="base" type="float" value="0.9" />
+    <input name="base_color" type="color3" nodename="SS_checker" />
+    <input name="metalness" type="float" value="0.02" />
+    <input name="specular_roughness" type="float" value="0.32" />
+    <input name="coat" type="float" value="0.9" />
+    <input name="coat_roughness" type="float" value="0.07" />
+  </standard_surface>
+  <image name="SS_checker" type="color3">
+    <input name="file" type="filename" value="textures/warm.png" colorspace="srgb_texture" />
+  </image>
+  <surfacematerial name="SS_Coat" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="SS_Coat_surface" />
+  </surfacematerial>
+  <standard_surface name="SS_Anisotropy_surface" type="surfaceshader">
+    <input name="base" type="float" value="0.9" />
+    <input name="base_color" type="color3" value="0.7, 0.27, 0.07" />
+    <input name="metalness" type="float" value="0.95" />
+    <input name="specular_roughness" type="float" value="0.32" />
+    <input name="specular_anisotropy" type="float" value="0.8" />
+  </standard_surface>
+  <surfacematerial name="SS_Anisotropy" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="SS_Anisotropy_surface" />
+  </surfacematerial>
+  <standard_surface name="SS_Glass_surface" type="surfaceshader">
+    <input name="base" type="float" value="0.9" />
+    <input name="base_color" type="color3" value="0.35, 0.08, 0.04" />
+    <input name="metalness" type="float" value="0.02" />
+    <input name="specular_roughness" type="float" value="0.07" />
+    <input name="transmission" type="float" value="0.98" />
+    <input name="transmission_color" type="color3" value="0.45, 0.8, 0.95" />
+    <input name="transmission_depth" type="float" value="20" />
+    <input name="specular_IOR" type="float" value="1.45" />
+  </standard_surface>
+  <surfacematerial name="SS_Glass" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="SS_Glass_surface" />
+  </surfacematerial>
+  <standard_surface name="SS_Subsurface_surface" type="surfaceshader">
+    <input name="base" type="float" value="0.9" />
+    <input name="base_color" type="color3" value="0.35, 0.08, 0.04" />
+    <input name="metalness" type="float" value="0.02" />
+    <input name="specular_roughness" type="float" value="0.32" />
+    <input name="subsurface" type="float" value="0.85" />
+    <input name="subsurface_color" type="color3" value="0.85, 0.25, 0.08" />
+    <input name="subsurface_radius" type="color3" value="1.0, 0.4, 0.15" />
+    <input name="subsurface_scale" type="float" value="3.0" />
+  </standard_surface>
+  <surfacematerial name="SS_Subsurface" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="SS_Subsurface_surface" />
+  </surfacematerial>
+</materialx>

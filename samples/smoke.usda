@@ -1,0 +1,70 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Z"
+    metersPerUnit = 0.01
+    startTimeCode = 0
+    endTimeCode = 1
+)
+def Xform "World" {
+    def Mesh "Cube" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    ) {
+        point3f[] points = [(-50,-50,0),(50,-50,0),(50,50,0),(-50,50,0),(-50,-50,100),(50,-50,100),(50,50,100),(-50,50,100)]
+        int[] faceVertexCounts = [4,4,4,4,4,4]
+        int[] faceVertexIndices = [0,3,2,1,4,5,6,7,0,1,5,4,1,2,6,5,2,3,7,6,3,0,4,7]
+        uniform token subdivisionScheme = "none"
+        rel material:binding = </Looks/Red>
+        double3 xformOp:translate.timeSamples = { 0: (0,0,0), 1: (-50,0,0) }
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Mesh "Ground" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    ) {
+        point3f[] points = [(-50,-50,-50),(50,-50,-50),(50,50,-50),(-50,50,-50),(-50,-50,50),(50,-50,50),(50,50,50),(-50,50,50)]
+        int[] faceVertexCounts = [4,4,4,4,4,4]
+        int[] faceVertexIndices = [0,3,2,1,4,5,6,7,0,1,5,4,1,2,6,5,2,3,7,6,3,0,4,7]
+        uniform token subdivisionScheme = "none"
+        rel material:binding = </Looks/Grey>
+        double3 xformOp:translate = (0,0,-5)
+        float3 xformOp:scale = (12,12,0.1)
+        uniform token[] xformOpOrder = ["xformOp:translate","xformOp:scale"]
+    }
+}
+def Scope "Looks" {
+    def Material "Red" {
+        token outputs:surface.connect = </Looks/Red/Shader.outputs:surface>
+        def Shader "Shader" {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.7,0.05,0.02)
+            float inputs:metallic = 0.05
+            float inputs:roughness = 0.4
+            token outputs:surface
+        }
+    }
+    def Material "Grey" {
+        token outputs:surface.connect = </Looks/Grey/Shader.outputs:surface>
+        def Shader "Shader" {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.4,0.4,0.4)
+            float inputs:metallic = 0
+            float inputs:roughness = 0.7
+            token outputs:surface
+        }
+    }
+}
+def Camera "Camera" {
+    float focalLength = 18.148
+    float horizontalAperture = 20.955
+    float verticalAperture = 11.787
+    float2 clippingRange = (0.1,100000)
+    matrix4d xformOp:transform = ((-0.70710678,0.70710678,0,0),(-0.26490647,-0.26490647,0.92717265,0),(0.65561007,0.65561007,0.37463432,0),(350,350,250,1))
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+def DistantLight "KeyLight" {
+    color3f inputs:color = (1,1,1)
+    float inputs:intensity = 5
+    float inputs:angle = 0.5
+    float3 xformOp:rotateXYZ = (-45,0,30)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
