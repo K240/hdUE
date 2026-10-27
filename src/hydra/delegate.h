@@ -20,9 +20,12 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 struct HdUEMeshData {
-    std::string id, material, scenePath, sceneAsset;
+    std::string id, material, scenePath, sceneAsset, bindingPath, sourceId;
     std::vector<GfVec3f> points, normals;
     std::vector<GfVec2f> uv;
+    std::map<std::string, std::vector<float>> masks;
+    std::map<std::string, std::string> maskErrors;
+    std::vector<uint32_t> sourceCorners;
     GfMatrix4d transform{1};
     bool visible = true;
     std::shared_ptr<const HdUEPickMesh> pickMesh;
@@ -48,8 +51,11 @@ struct HdUEState : HdRenderParam {
     std::map<std::string, HdUEMeshData> meshes;
     std::map<std::string, HdUEMaterialData> materials;
     std::map<std::string, HdUELightData> lights;
+    std::map<std::string, uint64_t> geometryRevisions;
+    HdRenderIndex* renderIndex = nullptr;
     std::set<std::string> dirtyMeshes, dirtyMaterials, dirtyLights, removed;
     HdRenderSettingsMap settings;
+    std::shared_ptr<const VtDictionary> wetBindings = std::make_shared<const VtDictionary>();
     std::shared_ptr<hdue::Backend> backend;
     HdueSession session = 0;
     uint32_t width = 0, height = 0;
@@ -73,6 +79,7 @@ struct HdUEState : HdRenderParam {
     bool firstBatch = true;
     bool assetRequestPending = false;
     HdueAssetSceneStatus nativeAssets{sizeof(HdueAssetSceneStatus)};
+    HdueSurfaceStatus surfaceStatus{sizeof(HdueSurfaceStatus)};
     uint32_t submittedNativeLights = 0;
     ~HdUEState() override;
     void erase(const std::string& id);

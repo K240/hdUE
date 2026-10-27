@@ -1,5 +1,6 @@
 #include "delegate.h"
 #include "depth.h"
+#include "surface_settings.h"
 #include "pxr/imaging/hd/renderPass.h"
 #include "pxr/imaging/hd/renderIndex.h"
 #include "pxr/imaging/hd/rprim.h"
@@ -25,11 +26,13 @@ PXR_NAMESPACE_OPEN_SCOPE
 HdRprim* HdUECreateMesh(const SdfPath&);
 HdSprim* HdUECreateMaterial(const SdfPath&);
 HdSprim* HdUECreateLight(const SdfPath&, uint32_t);
+void HdUERefreshWetMasks(HdUEState&, HdRenderIndex*);
 
 HdUEState::~HdUEState() { if (session && backend) backend->api().destroy_session(session); }
 void HdUEState::erase(const std::string& id) {
     std::lock_guard lock(mutex);
     meshes.erase(id); materials.erase(id); lights.erase(id);
+    geometryRevisions.erase(id);
     dirtyMeshes.erase(id); dirtyMaterials.erase(id); dirtyLights.erase(id);
     removed.insert(id); ++revision;
 }
@@ -61,6 +64,34 @@ void submit(HdUEState& state) {
     std::vector<const char*> removed;
     // Sync has joined before Execute. The lock also protects stats/settings access.
     std::lock_guard lock(state.mutex);
+    const auto effects=state.setting<VtDictionary>("surfaceEffects",{});
+    std::vector<HdueWetBinding> wet;
+    std::vector<std::string> wetAssets, wetPreviews;
+    wetAssets.reserve(state.meshes.size()); wetPreviews.reserve(state.meshes.size());
+    for (const auto& [id, data] : state.meshes) {
+        const auto fields=HdUEWetSettings(effects,data);
+        if (fields.empty()) continue;
+        const float amount=HdUEWetValue<float>(fields,"amount",float(HdUEWetValue<double>(fields,"amount",1.)));
+        if (amount==0.f && !state.setting<bool>("wetMaskPreview",false)) continue;
+        const auto maskName=HdUEWetValue<std::string>(fields,"maskPrimvar","");
+        const auto mask=data.masks.find(maskName);
+        if (!maskName.empty() && mask==data.masks.end()) {
+            const auto error=data.maskErrors.find(maskName);
+            throw std::runtime_error(data.bindingPath+": "+(error!=data.maskErrors.end()?error->second:"Wet mask not synchronized: "+maskName));
+        }
+        wetAssets.push_back(HdUEWetValue<std::string>(fields,"asset",""));
+        wetPreviews.push_back(HdUEWetValue<std::string>(fields,"previewAsset",""));
+        HdueWetBinding binding{}; binding.struct_size=sizeof(binding); binding.object_id=data.id.c_str();
+        binding.variant_asset=wetAssets.back().c_str(); binding.preview_asset=wetPreviews.back().c_str();
+        binding.amount=amount;
+        binding.roughness=HdUEWetValue<float>(fields,"roughness",float(HdUEWetValue<double>(fields,"roughness",.08)));
+        binding.flags=state.setting<bool>("wetMaskPreview",false)?HDUE_WET_MASK_PREVIEW:0;
+        if (HdUEWetValue<bool>(fields,"graph",false)) binding.flags|=HDUE_SURFACE_GRAPH;
+        if (!maskName.empty()) { binding.mask=mask->second.data(); binding.mask_count=uint32_t(mask->second.size()); }
+        wet.push_back(binding);
+    }
+    const auto& surfaceApi=state.backend->surface_api();
+    if (!wet.empty() && !surfaceApi.apply) throw std::runtime_error("Wet surface extension unavailable; build/cook/stage the current runtime.");
     const auto count = state.dirtyMeshes.size();
     positions.reserve(count); normals.reserve(count); uvs.reserve(count); indices.reserve(count); nativeMeshes.reserve(count);
     nativeMaterials.reserve(state.dirtyMaterials.size());
@@ -211,7 +242,11 @@ void submit(HdUEState& state) {
             throw std::runtime_error("This scene requires the backend lighting extension; build/cook/stage a current runtime.");
     batch.lights = lightingApi.upsert?nullptr:lights.data(); batch.light_count = lightingApi.upsert?0:uint32_t(lights.size());
     batch.removed_ids = removed.data(); batch.removed_count = uint32_t(removed.size());
-    state.backend->require(state.backend->api().apply_scene(state.session, &batch), "apply_scene");
+    if (batch.reset_scene || batch.mesh_count || batch.material_count || batch.light_count || batch.removed_count) {
+        state.backend->require(state.backend->api().apply_scene(state.session, &batch), "apply_scene");
+        for (const auto& id:state.removed) state.geometryRevisions.erase(id);
+        for (const auto& mesh:meshes) if (!mesh.native_asset || !*mesh.native_asset) ++state.geometryRevisions[mesh.id];
+    }
     if(lightingApi.upsert && !extendedLights.empty()) {
         HdueLightBatch update{sizeof(HdueLightBatch),uint32_t(extendedLights.size()),extendedLights.data()};
         state.backend->require(lightingApi.upsert(state.session,&update),"upsert_lights");
@@ -259,6 +294,12 @@ void submit(HdUEState& state) {
         ++state.materialParameterUpdates;
     }
     state.autoLightActive = autoLight; state.viewerLights = cameraLights + (autoLight ? 2 : 0);
+    if (surfaceApi.apply && (!wet.empty() || state.surfaceStatus.binding_count)) {
+        for (auto& binding:wet) binding.geometry_revision=state.geometryRevisions[binding.object_id];
+        HdueSurfaceBatch surface{sizeof(surface),uint32_t(wet.size()),wet.data()};
+        state.backend->require(surfaceApi.apply(state.session,&surface),"apply_surface_effects");
+        state.backend->require(surfaceApi.get_status(state.session,&state.surfaceStatus),"surface_status");
+    }
     state.submittedNativeLights = state.nativeAssets.lights;
     ++state.sceneSubmissions;
     state.dirtyMeshes.clear(); state.dirtyMaterials.clear(); state.dirtyLights.clear(); state.removed.clear();
@@ -275,12 +316,20 @@ public:
     Pass(HdRenderIndex* index, const HdRprimCollection& collection, std::shared_ptr<HdUEState> state)
         : HdRenderPass(index, collection), state_(std::move(state)) {}
     bool IsConverged() const override {
+        if (const auto error=state_->setting<std::string>("wetValidationError", ""); !error.empty())
+            return converged_ && state_->error==error;
         if (!state_->setting<bool>("materialGraphValid",true)) return true;
         return converged_ && settingsVersion_==state_->requestSettingsRevision && state_->submittedRevision==state_->revision;
     }
     void _Execute(const HdRenderPassStateSharedPtr& pass, const TfTokenVector&) override {
         try {
             auto& s = *state_;
+            if (const auto error=s.setting<std::string>("wetValidationError", ""); !error.empty()) {
+                // Preparation/undo must change the graph before rendering can
+                // resume. Stop Hydra's update loop, retaining the displayed AOV
+                // while keeping the invalid request out of completed-frame APIs.
+                s.error=error; s.lastFrame={}; converged_=true; return;
+            }
 #if defined(HDUE_HOUDINI)
             s.executeThread=GetCurrentThreadId();
 #endif
@@ -308,6 +357,7 @@ public:
                 HdueSessionDesc desc{}; desc.struct_size = sizeof(desc); desc.width = buffer->GetWidth(); desc.height = buffer->GetHeight();
                 s.backend->require(s.backend->api().create_session(&desc, &s.session), "create_session");
                 s.width = desc.width; s.height = desc.height; s.firstBatch = true;
+                s.geometryRevisions.clear(); s.surfaceStatus={sizeof(HdueSurfaceStatus)};
                 depthEnabled_=false;
                 for (const auto& [id, data] : s.meshes) s.dirtyMeshes.insert(id);
                 for (const auto& [id, data] : s.materials) s.dirtyMaterials.insert(id);
@@ -319,7 +369,7 @@ public:
                 s.backend->require(s.backend->depth_api().set_enabled(s.session,1),"enable_depth");
                 depthEnabled_=true; changed=true;
             }
-            if (changed) submit(s);
+            if (changed) { HdUERefreshWetMasks(s,GetRenderIndex()); submit(s); }
             if (s.backend->asset_api().get_scene_status) {
                 HdueAssetSceneStatus assets{}; assets.struct_size=sizeof(assets);
                 s.backend->require(s.backend->asset_api().get_scene_status(s.session,&assets),"asset_scene_status");
@@ -430,6 +480,7 @@ HdUERenderDelegate::HdUERenderDelegate(const HdRenderSettingsMap& settings)
     state_->settings = settings;
     for(const auto& [key,value]:settings) if(key.GetString().starts_with("hdUE:"))
         state_->settings[TfToken(key.GetString().substr(5))]=value;
+    state_->wetBindings=std::make_shared<const VtDictionary>(state_->setting<VtDictionary>("surfaceEffects",{}));
     const auto stageUnits=settings.find(TfToken("stageMetersPerUnit"));
     if (stageUnits!=settings.end() && stageUnits->second.IsHolding<double>())
         state_->settings[TfToken("metersPerUnit")]=stageUnits->second;
@@ -461,7 +512,9 @@ const TfTokenVector& HdUERenderDelegate::GetSupportedSprimTypes() const { static
     HdPrimTypeTokens->distantLight, HdPrimTypeTokens->sphereLight, HdPrimTypeTokens->rectLight,
     HdPrimTypeTokens->domeLight,HdPrimTypeTokens->diskLight,HdPrimTypeTokens->cylinderLight}; return t; }
 const TfTokenVector& HdUERenderDelegate::GetSupportedBprimTypes() const { static TfTokenVector t{HdPrimTypeTokens->renderBuffer}; return t; }
-HdRenderPassSharedPtr HdUERenderDelegate::CreateRenderPass(HdRenderIndex* index, const HdRprimCollection& collection) { return std::make_shared<Pass>(index, collection, state_); }
+HdRenderPassSharedPtr HdUERenderDelegate::CreateRenderPass(HdRenderIndex* index, const HdRprimCollection& collection) {
+    state_->renderIndex=index; return std::make_shared<Pass>(index, collection, state_);
+}
 HdInstancer* HdUERenderDelegate::CreateInstancer(HdSceneDelegate*, const SdfPath&) { TF_RUNTIME_ERROR("Instancing is not implemented in the initial hdUE delegate"); return nullptr; }
 void HdUERenderDelegate::DestroyInstancer(HdInstancer* p) { delete p; }
 HdRprim* HdUERenderDelegate::CreateRprim(const TfToken& type, const SdfPath& id) { return type == HdPrimTypeTokens->mesh ? HdUECreateMesh(id) : nullptr; }
@@ -514,6 +567,14 @@ void HdUERenderDelegate::SetRenderSetting(const TfToken& key, const VtValue& val
         ++state_->revision;
     }
     state_->settings[key] = value;
+    if (key==TfToken("surfaceEffects")) state_->wetBindings=std::make_shared<const VtDictionary>(state_->setting<VtDictionary>("surfaceEffects",{}));
+    if (key==TfToken("surfaceEffects") || key==TfToken("wetMaskPreview") || key==TfToken("wetValidationError")) {
+        ++state_->revision;
+        if (key==TfToken("surfaceEffects") && state_->renderIndex)
+            for (const auto& id:state_->renderIndex->GetRprimIds()) state_->renderIndex->GetChangeTracker().MarkRprimDirty(id,HdChangeTracker::DirtyPrimvar);
+        if (key==TfToken("surfaceEffects") && TfGetenvBool("HDUE_TRACE_SCENE",false))
+            TF_STATUS("hdUE wet settings: renderIndex=%p rprims=%zu",state_->renderIndex,state_->renderIndex?state_->renderIndex->GetRprimIds().size():0);
+    }
     if (key==TfToken("renderMode") || key==TfToken("samplesPerPixel") || key==TfToken("warmupFrames") ||
         key==TfToken("lumenEnabled") || key==TfToken("timeSeconds")) ++state_->requestSettingsRevision;
     if (key==TfToken("houdini:frame") || key==TfToken("houdini:fps")) {
@@ -547,6 +608,8 @@ VtDictionary HdUERenderDelegate::GetRenderStats() const {
     std::lock_guard lock(state_->mutex);
     HdueResidencyStatus residency{}; residency.struct_size = sizeof(residency);
     const auto& residencyApi = state_->backend->residency_api();
+    if (state_->session && state_->backend->surface_api().get_status)
+        state_->backend->surface_api().get_status(state_->session,&state_->surfaceStatus);
     if (state_->session && residencyApi.get_status) residencyApi.get_status(state_->session, &residency);
     VtDictionary nativeAssetIds;
     int triangles = 0;
@@ -563,6 +626,9 @@ VtDictionary HdUERenderDelegate::GetRenderStats() const {
     if (state_->setting<bool>("sceneLightsEnabled", true))
         for (const auto& [id, light] : state_->lights) if (!light.viewer && active(light)) ++sceneLights;
     return { {"error", VtValue(residency.phase == HDUE_RESIDENCY_FAILED ? std::string(residency.message) : state_->error)}, {"generation", VtValue(state_->generation)},
+        {"wetBindings",VtValue(int(state_->surfaceStatus.binding_count))}, {"wetUploadPending",VtValue(bool(state_->surfaceStatus.upload_pending))},
+        {"wetMaskUploads",VtValue(state_->surfaceStatus.mask_uploads)}, {"wetMaskBytes",VtValue(state_->surfaceStatus.mask_bytes)},
+        {"wetGeometryUploads",VtValue(state_->surfaceStatus.geometry_uploads)}, {"wetUpdates",VtValue(state_->surfaceStatus.updates)},
         {"vtResidencyPhase", VtValue(int(residency.phase))}, {"vtResidencyGeneration", VtValue(residency.generation)},
         {"vtRequiredPages", VtValue(residency.required_pages)}, {"vtResidentPages", VtValue(residency.resident_pages)},
         {"vtLockedTiles", VtValue(residency.locked_tiles)}, {"vtRequiredMappings", VtValue(residency.required_mappings)},

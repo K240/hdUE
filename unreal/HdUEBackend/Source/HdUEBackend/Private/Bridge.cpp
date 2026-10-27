@@ -284,6 +284,7 @@ HdueResult HDUE_CALL RequestRender(HdueSession Handle, const HdueRenderRequest* 
     if (Request->mode == HDUE_PATH_TRACED && !HasRayTracing()) return HDUE_NOT_SUPPORTED;
     const auto Session = Runtime.Session;
     if (Request->generation <= Session->Request.generation) return HDUE_STALE_FRAME;
+    if (!Session->Scene->SurfaceReady()) return HDUE_PENDING;
     if(!Session->Scene->Lighting->GetError().IsEmpty()) return Fail(HDUE_ENGINE_ERROR,*Session->Scene->Lighting->GetError());
     if(!Session->Scene->Lighting->Ready()) return HDUE_PENDING;
     HdueAssetSceneStatus Assets{}; Session->Scene->Assets.GetSceneStatus(Assets);
@@ -317,6 +318,7 @@ HdueResult HDUE_CALL RequestRender(HdueSession Handle, const HdueRenderRequest* 
     Runtime.World->SetShouldTick(Request->mode == HDUE_REALTIME);
     if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.PathTracing.SamplesPerPixel"))) CVar->Set(int32(Request->samples_per_pixel), ECVF_SetByCode);
     if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.PathTracing.Denoiser"))) CVar->Set(0, ECVF_SetByCode);
+    if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.PathTracing.FrameIndependentTemporalSeed"))) CVar->Set(0, ECVF_SetByCode);
     if (IConsoleVariable* CVar=IConsoleManager::Get().FindConsoleVariable(TEXT("r.PathTracing.VisibleLights")))
         CVar->Set(Session->Scene->Lighting->BackgroundVisible()?2:0,ECVF_SetByCode);
     return HDUE_OK;
@@ -569,6 +571,21 @@ HdueResult HDUE_CALL UpsertLights(HdueSession Handle,const HdueLightBatch* Batch
     Runtime.Session->HasRequest=false; ReleaseResidency(Runtime.Session); Runtime.World->SetShouldTick(true);
     return HDUE_OK;
 }
+HdueResult HDUE_CALL ApplySurface(HdueSession Handle, const HdueSurfaceBatch* Batch) {
+    if (CheckReady() != HDUE_OK) return CheckReady();
+    if (!ValidSession(Handle) || !Batch) return HDUE_INVALID_ARGUMENT;
+    const auto Result = Runtime.Session->Scene->ApplySurface(*Batch, Runtime.Error);
+    if (Result != HDUE_OK) return Result;
+    Runtime.Session->HasRequest = false;
+    ReleaseResidency(Runtime.Session);
+    Runtime.Error.Empty();
+    return HDUE_OK;
+}
+HdueResult HDUE_CALL SurfaceStatus(HdueSession Handle, HdueSurfaceStatus* Status) {
+    if (CheckReady() != HDUE_OK) return CheckReady();
+    if (!ValidSession(Handle) || !Status || Status->struct_size != sizeof(*Status)) return HDUE_INVALID_ARGUMENT;
+    *Status = Runtime.Session->Scene->SurfaceStatus(); return HDUE_OK;
+}
 HdueResult HDUE_CALL LightingStatus(HdueSession Handle,HdueLightingStatus* Status) {
     if(CheckReady()!=HDUE_OK) return CheckReady();
     if(!ValidSession(Handle) || !Status || Status->struct_size!=sizeof(*Status)) return HDUE_INVALID_ARGUMENT;
@@ -732,6 +749,11 @@ extern "C" HDUE_EXPORT HdueResult HDUE_CALL hdue_get_lighting_api(uint32 Version
     if(!Api || Capacity<sizeof(*Api)) return HDUE_BUFFER_TOO_SMALL;
     if(Version!=HDUE_LIGHTING_ABI_VERSION) return HDUE_ABI_MISMATCH;
     *Api={sizeof(*Api),HDUE_LIGHTING_ABI_VERSION,UpsertLights,LightingStatus}; return HDUE_OK;
+}
+extern "C" HDUE_EXPORT HdueResult HDUE_CALL hdue_get_surface_api(uint32 Version, uint32 Capacity, HdueSurfaceApi* Api) {
+    if (!Api || Capacity < sizeof(*Api)) return HDUE_BUFFER_TOO_SMALL;
+    if (Version != HDUE_SURFACE_ABI_VERSION) return HDUE_ABI_MISMATCH;
+    *Api = {sizeof(*Api), HDUE_SURFACE_ABI_VERSION, ApplySurface, SurfaceStatus}; return HDUE_OK;
 }
 #endif
 

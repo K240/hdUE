@@ -2,10 +2,12 @@ param(
     [string]$HoudiniRoot='',
     [string]$RuntimeConfig='',
     [string]$InputUsd='',
+    [string]$HipFile='',
     [string]$LogDirectory='',
     [string]$BuildDirectory='',
     [string]$MaterialXLibrary='',
-    [ValidateSet('integration','viewport','optextures','materials','lighting','references')][string]$TestKind='integration',
+    [string]$SubstrateLibrary='',
+    [ValidateSet('integration','viewport','optextures','materials','lighting','references','surfaces','substrate','substrate-textures','substrate-live')][string]$TestKind='integration',
     [switch]$Test
 )
 $ErrorActionPreference='Stop'
@@ -23,12 +25,16 @@ if (-not $RuntimeConfig) {
     if (-not (Test-Path -LiteralPath $RuntimeConfig)) {throw 'Run Update-HoudiniRuntime.ps1 or specify an updated -RuntimeConfig with the depth extension.'}
 }
 if (-not (Test-Path -LiteralPath $RuntimeConfig)) {throw 'Specify a prepared -RuntimeConfig.'}
+if ($HipFile) {
+    if ($InputUsd) {throw 'Choose either -HipFile or -InputUsd.'}
+    $HipFile=(Resolve-Path -LiteralPath $HipFile).Path
+}
 if (-not $LogDirectory) {$LogDirectory=Join-Path $TaskRoot ('out\houdini-22.0.466\session-'+(Get-Date -Format 'yyyyMMdd-HHmmss-fff'))}
 New-Item -ItemType Directory -Force -Path $LogDirectory | Out-Null
 $DelegateBuild=if ($BuildDirectory) {[IO.Path]::GetFullPath($BuildDirectory)} else {Join-Path $TaskRoot 'build\houdini-22.0.466'}
 $Dll=Join-Path $DelegateBuild 'Release\hdUE_Houdini22.dll'
 if (-not (Test-Path -LiteralPath $Dll)) {throw 'Run Build-Houdini.ps1 first.'}
-$Names=@('HFS','PATH','PYTHONPATH','HOUDINI_PATH','PXR_PLUGINPATH_NAME','HOUDINI_USER_PREF_DIR','HOUDINI_NO_START_PAGE_SPLASH','HDUE_HOUDINI_ENABLE','HDUE_RUNTIME_CONFIG','HDUE_HOUDINI_INPUT','HDUE_HOUDINI_LOG_DIR','HDUE_HOUDINI_TEST','HDUE_HOUDINI_PLUGIN','HDUE_MATERIALX_LIBRARY')
+$Names=@('HFS','PATH','PYTHONPATH','HOUDINI_PATH','PXR_PLUGINPATH_NAME','HOUDINI_USER_PREF_DIR','HOUDINI_NO_START_PAGE_SPLASH','HDUE_HOUDINI_ENABLE','HDUE_RUNTIME_CONFIG','HDUE_HOUDINI_INPUT','HDUE_HOUDINI_HIP','HDUE_HOUDINI_LOG_DIR','HDUE_HOUDINI_TEST','HDUE_HOUDINI_PLUGIN','HDUE_MATERIALX_LIBRARY','HDUE_SUBSTRATE_LIBRARY')
 $Previous=@{}; foreach ($Name in $Names) {$Previous[$Name]=[Environment]::GetEnvironmentVariable($Name,'Process')}
 try {
     $env:HFS=$HoudiniRoot
@@ -38,9 +44,11 @@ try {
     $env:PXR_PLUGINPATH_NAME="$HoudiniRoot\bin\usd_plugins;$HoudiniRoot\houdini\dso\usd_plugins;$DelegateBuild\resources"
     $env:HDUE_HOUDINI_PLUGIN=$Dll
     $env:HDUE_MATERIALX_LIBRARY=if ($MaterialXLibrary) {[IO.Path]::GetFullPath($MaterialXLibrary)} else {''}
+    $env:HDUE_SUBSTRATE_LIBRARY=if ($SubstrateLibrary) {[IO.Path]::GetFullPath($SubstrateLibrary)} else {''}
     $env:HDUE_HOUDINI_ENABLE='1'
     $env:HDUE_RUNTIME_CONFIG=[IO.Path]::GetFullPath($RuntimeConfig)
     $env:HDUE_HOUDINI_INPUT=if ($InputUsd) {[IO.Path]::GetFullPath($InputUsd)} else {''}
+    $env:HDUE_HOUDINI_HIP=$HipFile
     if ($LogDirectory) {$env:HDUE_HOUDINI_LOG_DIR=[IO.Path]::GetFullPath($LogDirectory)}
     $env:HDUE_HOUDINI_TEST=if ($Test) {$TestKind} else {''}
     if ($Test) {
@@ -53,7 +61,9 @@ try {
         # profile. Do not write telemetry, privacy or user preference values.
         Set-Content -LiteralPath (Join-Path $env:HOUDINI_USER_PREF_DIR 'pluto_ui.pref') -Value 'pluto_ui.welcome_seen := 1;' -Encoding utf8
     }
-    $Process=Start-Process -FilePath $HoudiniExe -ArgumentList '-foreground' -PassThru -RedirectStandardOutput (Join-Path $LogDirectory 'houdini.log') -RedirectStandardError (Join-Path $LogDirectory 'houdini-error.log')
+    $LaunchArguments=@('-foreground')
+    if ($HipFile) {$LaunchArguments+='"'+$HipFile+'"'}
+    $Process=Start-Process -FilePath $HoudiniExe -ArgumentList $LaunchArguments -PassThru -RedirectStandardOutput (Join-Path $LogDirectory 'houdini.log') -RedirectStandardError (Join-Path $LogDirectory 'houdini-error.log')
     Write-Output "Houdini PID $($Process.Id), logs: $LogDirectory"
     if ($Test) {
         if (-not $Process.WaitForExit(420000)) {throw "Houdini verification timed out (PID $($Process.Id)); see $env:HDUE_HOUDINI_LOG_DIR."}

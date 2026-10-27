@@ -38,6 +38,7 @@ void pump() {
 struct Options {
     std::filesystem::path backend, project, output = "out/backend-smoke";
     std::string mode = "both";
+    std::string wetBase, wetVariant, wetPreview;
     uint32_t width = 640, height = 360, cycles = 3, samples = 64;
     double timeout = 600;
     bool visible = false;
@@ -53,6 +54,9 @@ Options parse(int argc, wchar_t** argv) {
         else if (key == L"--project") options.project = value;
         else if (key == L"--output") options.output = value;
         else if (key == L"--mode") options.mode = utf8(value);
+        else if (key == L"--wet-base") options.wetBase = utf8(value);
+        else if (key == L"--wet-variant") options.wetVariant = utf8(value);
+        else if (key == L"--wet-preview") options.wetPreview = utf8(value);
         else if (key == L"--width") options.width = std::stoul(value);
         else if (key == L"--height") options.height = std::stoul(value);
         else if (key == L"--cycles") options.cycles = std::stoul(value);
@@ -71,8 +75,13 @@ void check(bool value, const char* message) { if (!value) throw std::runtime_err
 
 void render(hdue::Backend& backend, HdueSession session, HdueRenderRequest request,
     const Options& options, const std::filesystem::path& file, std::ofstream& metrics, bool& comma) {
-    backend.require(backend.api().request_render(session, &request), "request_render");
     const auto start = Clock::now();
+    HdueResult submitted;
+    while ((submitted = backend.api().request_render(session, &request)) == HDUE_PENDING) {
+        pump(); backend.require(backend.api().tick(), "tick preparation");
+        if (seconds(start) > options.timeout) throw std::runtime_error("Surface preparation timeout");
+    }
+    backend.require(submitted, "request_render");
     HdueFrameInfo frame{};
     frame.struct_size = sizeof(frame);
     unsigned ticks = 0;
@@ -194,6 +203,58 @@ int wmain(int argc, wchar_t** argv) {
             request.lumen_enabled = 1;
             request.up[2] = 1;
             const std::string prefix = "cycle-" + std::to_string(cycle);
+            if (!options.wetBase.empty()) {
+                check(backend.surface_api().apply != nullptr, "Surface extension missing");
+                const float points[] = {-180,-140,0, 180,-140,0, 180,140,0, -180,-140,0, 180,140,0, -180,140,0};
+                const float normals[] = {0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,1};
+                const uint32_t indices[] = {0,2,1,3,5,4};
+                const float uv[] = {0,0, 1,0, 1,1, 0,0, 1,1, 0,1};
+                HdueMaterialDesc material{}; material.id="base"; material.native_asset=options.wetBase.c_str();
+                HdueMaterialDesc materialVariants[]={material,material};
+                materialVariants[1].id="variant"; materialVariants[1].native_asset=options.wetVariant.c_str();
+                HdueMeshDesc mesh{}; mesh.id="panel"; mesh.material_id="base"; mesh.positions=points; mesh.normals=normals;
+                mesh.vertex_count=6; mesh.index_count=6; mesh.indices=indices; mesh.visible=1;
+                mesh.uv=uv;
+                for (int c=0;c<4;++c) mesh.transform[c*4+c]=1;
+                HdueLightDesc light{}; light.id="key"; light.type=HDUE_DISTANT_LIGHT; light.visible=1; light.intensity=4;
+                light.direction[0]=.4f; light.direction[1]=.3f; light.direction[2]=-1;
+                light.color[0]=light.color[1]=light.color[2]=1;
+                HdueSceneBatch batch{}; batch.struct_size=sizeof(batch); batch.reset_scene=1;
+                batch.material_count=2; batch.materials=materialVariants; batch.mesh_count=1; batch.meshes=&mesh;
+                batch.light_count=1; batch.lights=&light;
+                backend.require(backend.api().apply_scene(session,&batch),"wet fixture");
+                HdueMaterialStats baseStats{sizeof(HdueMaterialStats)}, wetStats{sizeof(HdueMaterialStats)};
+                backend.require(backend.material_api().get_material_stats(session,"base",&baseStats),"dry shader cost");
+                backend.require(backend.material_api().get_material_stats(session,"variant",&wetStats),"wet shader cost");
+                check(wetStats.closure_count>baseStats.closure_count && wetStats.closure_count<=4 && wetStats.bytes_per_pixel<=128,"Water slab was simplified or exceeded its budget");
+                std::cout<<"Shader gate: dry="<<baseStats.closure_count<<"/"<<baseStats.bytes_per_pixel<<", wet="<<wetStats.closure_count<<"/"<<wetStats.bytes_per_pixel<<" closures/bytes\n";
+                for (uint32_t mode : {HDUE_REALTIME, HDUE_PATH_TRACED}) {
+                    request.mode=mode;
+                    for (int step=0;step<5;++step) {
+                        float mask[]={0,1,1,0,1,0};
+                        HdueWetBinding wet{}; wet.struct_size=sizeof(wet); wet.object_id="panel"; wet.geometry_revision=1;
+                        wet.variant_asset=options.wetVariant.c_str(); wet.preview_asset=options.wetPreview.c_str();
+                        wet.amount=step==1?.5f:1.f; wet.roughness=.08f;
+                        if (step>=3) {wet.mask=mask; wet.mask_count=6;}
+                        if (step==4) wet.flags=HDUE_WET_MASK_PREVIEW;
+                        HdueSurfaceBatch surface{sizeof(surface), step?1u:0u, &wet};
+                        backend.require(backend.surface_api().apply(session,&surface),"wet binding");
+                        if (step==3) {
+                            ++wet.geometry_revision;
+                            check(backend.surface_api().apply(session,&surface)==HDUE_STALE_FRAME,"Obsolete mask accepted");
+                            --wet.geometry_revision;
+                        }
+                        request.generation=generation++;
+                        render(backend,session,request,options,options.output/(prefix+"-wet-"+std::to_string(mode)+"-"+std::to_string(step)+".pfm"),metrics,comma);
+                    }
+                }
+                HdueSurfaceStatus surface{sizeof(surface)};
+                backend.require(backend.surface_api().get_status(session,&surface),"wet status");
+                check(surface.geometry_uploads==1 && surface.mask_uploads==2,"Mask/scalar edits uploaded geometry or redundant masks");
+                std::cout << "Surface gate: geometry=" << surface.geometry_uploads << ", masks=" << surface.mask_uploads << ", bytes=" << surface.mask_bytes << '\n';
+                backend.require(backend.api().destroy_session(session),"destroy wet session");
+                continue;
+            }
             if (options.mode != "pathtraced") {
                 request.mode = HDUE_REALTIME;
                 request.generation = generation++;

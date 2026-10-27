@@ -1,0 +1,143 @@
+#usda 1.0
+(
+    subLayers = [
+        @../wet_surface/showcase.usda@
+    ]
+)
+
+over "Looks"
+{
+    def Material "WaterCoating"
+    {
+        custom int hdue:substrate:version = 1
+        token outputs:hdue:surface.connect = </Looks/WaterCoating/Graph/layer.outputs:out>
+        token outputs:surface.connect = </Looks/WaterCoating/Preview.outputs:surface>
+
+        def "Graph"
+        {
+            def Shader "roughness"
+            {
+                uniform token info:id = "hdue:substrate:scalar"
+                string inputs:parameter_name = "WaterRoughness"
+                float inputs:value = 0.08
+                float outputs:out
+            }
+
+            def Shader "water"
+            {
+                uniform token info:id = "hdue:substrate:slab"
+                color3f inputs:diffuse_albedo = (0, 0, 0)
+                color3f inputs:f0 = (0.020059312, 0.020059312, 0.020059312)
+                color3f inputs:mfp = (1000000, 1000000, 1000000)
+                float inputs:roughness.connect = </Looks/WaterCoating/Graph/roughness.outputs:out>
+                string inputs:subsurface = "simple_volume"
+                token outputs:out
+            }
+
+            def Shader "amount"
+            {
+                uniform token info:id = "hdue:substrate:scalar"
+                string inputs:parameter_name = "Coverage"
+                float inputs:value = 1
+                float outputs:out
+            }
+
+            def Shader "clamp_amount"
+            {
+                uniform token info:id = "hdue:substrate:saturate"
+                float inputs:value.connect = </Looks/WaterCoating/Graph/amount.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "mask"
+            {
+                uniform token info:id = "hdue:substrate:primvar"
+                float inputs:default = 1
+                string inputs:primvar = "wetness"
+                float outputs:out
+            }
+
+            def Shader "coverage"
+            {
+                uniform token info:id = "hdue:substrate:multiply"
+                float inputs:a.connect = </Looks/WaterCoating/Graph/clamp_amount.outputs:out>
+                float inputs:b.connect = </Looks/WaterCoating/Graph/mask.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "weight"
+            {
+                uniform token info:id = "hdue:substrate:weight"
+                token inputs:surface.connect = </Looks/WaterCoating/Graph/water.outputs:out>
+                float inputs:weight.connect = </Looks/WaterCoating/Graph/coverage.outputs:out>
+                token outputs:out
+            }
+
+            def Shader "base"
+            {
+                custom rel hdue:materialx = </Looks/SS_Coat>
+                uniform token info:id = "hdue:substrate:materialx"
+                token outputs:out
+            }
+
+            def Shader "layer"
+            {
+                uniform token info:id = "hdue:substrate:vertical"
+                token inputs:base.connect = </Looks/WaterCoating/Graph/base.outputs:out>
+                bool inputs:parameter_blending = 0
+                float inputs:thickness = 0.01
+                token inputs:top.connect = </Looks/WaterCoating/Graph/weight.outputs:out>
+                token outputs:out
+            }
+        }
+
+        def Shader "Preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.18, 0.18, 0.18)
+            token outputs:surface
+        }
+    }
+}
+
+over "World"
+{
+    over "Dry"
+    {
+        custom bool hdue:surface:wet:enabled = 0
+    }
+
+    over "Wet"
+    {
+        custom bool hdue:surface:wet:enabled = 0
+
+        over "Sphere" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </Looks/WaterCoating>
+            float[] primvars:wetness = [1] (
+                interpolation = "constant"
+            )
+        }
+    }
+
+    over "Ramp"
+    {
+        custom bool hdue:surface:wet:enabled = 0
+
+        over "Sphere" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </Looks/WaterCoating>
+
+            over "Top" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                rel material:binding = </Looks/WaterCoating>
+            }
+        }
+    }
+}

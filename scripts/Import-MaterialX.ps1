@@ -4,6 +4,7 @@ param(
     [string]$OutputDirectory = '',
     [string]$EditorRoot = '',
     [switch]$SkipBuild,
+    [switch]$WetProfile,
     [switch]$SkipCook
 )
 $ErrorActionPreference = 'Stop'
@@ -33,7 +34,9 @@ foreach ($File in $Source) {
     $Folders[$Folder] = $true
     $Report = Join-Path $RunOutput ($Folder + '.json')
     $Log = Join-Path $RunOutput ($Folder + '.log')
-    & $Editor $Project -run=HdUEImportMaterialX "-Source=$ResolvedSource" "-Destination=$($Destination.TrimEnd('/'))/$Folder" "-Report=$Report" -unattended -nop4 -nosplash -nullrhi -stdout -UTF8Output *> $Log
+    $ProfileArgs = @()
+    if ($WetProfile) { $ProfileArgs += '-WetProfile' }
+    & $Editor $Project -run=HdUEImportMaterialX "-Source=$ResolvedSource" "-Destination=$($Destination.TrimEnd('/'))/$Folder" "-Report=$Report" @ProfileArgs -unattended -nop4 -nosplash -nullrhi -stdout -UTF8Output *> $Log
     if ($LASTEXITCODE -or -not (Test-Path -LiteralPath $Report)) { throw "MaterialX import failed: $Log" }
     $LogText = [IO.File]::ReadAllText($Log)
     if ($LogText -match 'Log\w+: Error:|Fatal error') { throw "MaterialX import reported errors: $Log" }

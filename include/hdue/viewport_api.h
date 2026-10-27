@@ -41,6 +41,23 @@ typedef struct HdueViewportMaterials {
 /* Version 1. Replace the complete prepared-material binding set atomically.
  * Stale sessions and invalid batches leave existing settings untouched. */
 HDUE_VIEWPORT_EXPORT HdueResult HDUE_CALL hdue_set_viewport_materials(const HdueViewportMaterials* materials);
+typedef struct HdueViewportWet {
+    const char* prim_path;
+    const char* variant_asset;
+    const char* preview_asset;
+    const char* mask_primvar;
+    float amount, roughness;
+    uint32_t flags, reserved;
+} HdueViewportWet;
+typedef struct HdueViewportSurfaces {
+    uint32_t struct_size, abi_version;
+    HdueSession session;
+    uint32_t binding_count, mask_preview;
+    const HdueViewportWet* bindings;
+    const char* validation_error;
+} HdueViewportSurfaces;
+/* An error blocks new wet convergence until fixed, preserving the last image. */
+HDUE_VIEWPORT_EXPORT HdueResult HDUE_CALL hdue_set_viewport_surfaces(const HdueViewportSurfaces* surfaces);
 #ifdef __cplusplus
 }
 #endif

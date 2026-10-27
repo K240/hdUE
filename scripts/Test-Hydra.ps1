@@ -6,6 +6,7 @@ param(
     [int]$Cycles = 2,
     [switch]$SelfTest,
     [switch]$LightingTest,
+    [string]$RendererSettings = '',
     [string]$OutputDirectory = '',
     [string]$CameraPath = '/Camera',
     [double]$Time = 0,
@@ -48,6 +49,7 @@ try {
     foreach ($Mapping in $NativeMaterial) { $Arguments += @('--native-material', $Mapping) }
     if ($SelfTest) { $Arguments += '--self-test' }
     if ($LightingTest) { $Arguments += '--lighting-test' }
+    if ($RendererSettings) { $Arguments += @('--renderer-settings', [IO.Path]::GetFullPath($RendererSettings)) }
     & (Join-Path $TaskRoot 'build\Release\hdue_usd_render.exe') @Arguments
     if ($LASTEXITCODE) { throw 'Hydra/UE rendering failed.' }
     $MetricsPath = Join-Path $RunOutput 'metrics.json'

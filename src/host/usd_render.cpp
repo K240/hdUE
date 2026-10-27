@@ -31,6 +31,7 @@
 #include <thread>
 
 PXR_NAMESPACE_USING_DIRECTIVE
+#include "surface_settings.h"
 namespace {
 hdue::Backend* backend = nullptr;
 using Clock = std::chrono::steady_clock;
@@ -53,6 +54,7 @@ void pump() {
 }
 struct Options {
     std::filesystem::path dll, project, input, plugins, output = "out/hydra";
+    std::filesystem::path rendererSettings;
     std::string mode = "both", camera = "/Camera";
     uint32_t width = 640, height = 360, cycles = 1;
     double time = 0, timeout = 120;
@@ -72,6 +74,7 @@ Options parse(int argc, wchar_t** argv) {
         else if (key == L"--input") out.input = std::filesystem::absolute(value);
         else if (key == L"--plugins") out.plugins = std::filesystem::absolute(value);
         else if (key == L"--output") out.output = std::filesystem::absolute(value);
+        else if (key == L"--renderer-settings") out.rendererSettings=std::filesystem::absolute(value);
         else if (key == L"--mode") out.mode = utf8(value);
         else if (key == L"--camera") out.camera = utf8(value);
         else if (key == L"--width") out.width = uint32_t(std::stoul(value.wstring()));
@@ -190,12 +193,15 @@ void cycle(HdRendererPlugin* plugin, const Options& options, uint32_t cycleIndex
     for (const auto& prim : stage->Traverse()) check(!prim.IsA<UsdGeomPointInstancer>(), "Point instancing is outside this initial delegate");
     check(stage->GetPrimAtPath(SdfPath(options.camera)).IsA<UsdGeomCamera>(), "A perspective USD camera is required");
     HdRenderSettingsMap settings;
+    const auto prepared=readRendererSettings(options.rendererSettings);
+    const auto profiles=stat<VtDictionary>(prepared,"wetProfiles",{});
+    for (const auto& [name,value]:prepared) if (name!="wetProfiles") settings[TfToken(name)]=value;
     settings[TfToken("backendLibrary")] = VtValue(utf8(options.dll));
     settings[TfToken("metersPerUnit")] = VtValue(UsdGeomGetStageMetersPerUnit(stage));
     settings[TfToken("upAxis")] = VtValue(UsdGeomGetStageUpAxis(stage).GetString());
     settings[TfToken("samplesPerPixel")] = VtValue(64);
     settings[TfToken("nativeMeshAssets")] = VtValue(options.meshes);
-    settings[TfToken("nativeMaterialAssets")] = VtValue(options.materials);
+    if (!options.materials.empty()) settings[TfToken("nativeMaterialAssets")] = VtValue(options.materials);
     settings[TfToken("timeSeconds")] = VtValue(options.time / stage->GetTimeCodesPerSecond());
     auto* raw = plugin->CreateRenderDelegate(settings);
     check(raw != nullptr, "Cannot create hdUE delegate");
@@ -221,6 +227,7 @@ void cycle(HdRendererPlugin* plugin, const Options& options, uint32_t cycleIndex
         HdTaskSharedPtrVector tasks{task};
         const auto prefix = "cycle-" + std::to_string(cycleIndex) + "-";
         const auto capture = [&](const std::string& label) {
+            if (!stat<bool>(prepared,"substratePrepared",false)) updateWetSettings(stage,raw,profiles,UsdTimeCode(options.time));
             imaging.ApplyPendingUpdates();
             return render(engine, index.get(), tasks, buffer, raw, options, prefix + label, metrics, comma);
         };
@@ -277,6 +284,17 @@ void cycle(HdRendererPlugin* plugin, const Options& options, uint32_t cycleIndex
         }
         if (options.selfTest) {
             check(bool(stage->GetPrimAtPath(SdfPath("/World/Cube"))), "Self-test requires samples/smoke.usda");
+            const auto generation=stat<uint64_t>(raw->GetRenderStats(),"generation",0);
+            raw->SetRenderSetting(TfToken("wetValidationError"),VtValue(std::string("Material requires preparation")));
+            check(!pass->IsConverged(),"Preparation error was not acknowledged by the render pass");
+            engine.Execute(index.get(),&tasks);
+            check(pass->IsConverged(),"Preparation error keeps Hydra rendering indefinitely");
+            const auto blocked=raw->GetRenderStats();
+            check(stat<uint64_t>(blocked,"frameId",1)==0 && stat<uint64_t>(blocked,"generation",0)==generation,
+                "Unprepared material published a completed frame or restarted rendering");
+            check(stat<std::string>(blocked,"error","")=="Material requires preparation","Missing preparation diagnostic");
+            raw->SetRenderSetting(TfToken("wetValidationError"),VtValue(std::string()));
+            check(!pass->IsConverged(),"Restored material did not resume Hydra rendering");
             const auto cameraPrim = stage->GetPrimAtPath(SdfPath(options.camera));
             GfMatrix4d camera; bool reset = false;
             UsdGeomXformable(cameraPrim).GetLocalTransformation(&camera, &reset, UsdTimeCode::Default());

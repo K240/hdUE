@@ -12,6 +12,10 @@
 #include <algorithm>
 #include "geom_subsets.h"
 #include "mesh_normals.h"
+#include "surface_settings.h"
+#include "wet_mask.h"
+#include "pxr/base/tf/getenv.h"
+#include "pxr/imaging/hd/renderIndex.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 namespace {
@@ -49,6 +53,10 @@ template<class T> std::vector<T> expanded(HdSceneDelegate* delegate, const SdfPa
 }
 class Mesh final : public HdMesh {
     std::set<std::string> emitted_;
+    HdMeshTopology maskTopology_;
+    VtVec3iArray maskTriangles_;
+    VtIntArray maskParameters_;
+    size_t pointCount_=0;
 public:
     explicit Mesh(const SdfPath& id) : HdMesh(id) {}
     HdDirtyBits GetInitialDirtyBitsMask() const override { return HdChangeTracker::AllDirty; }
@@ -56,7 +64,9 @@ public:
         auto* state = static_cast<HdUEState*>(param);
         HdUEMeshData mesh;
         mesh.id = GetId().GetString();
+        mesh.sourceId = mesh.id;
         mesh.scenePath = delegate->GetScenePrimPath(GetId(), -1).GetString();
+        mesh.bindingPath = mesh.scenePath;
         mesh.material = delegate->GetMaterialId(GetId()).GetString();
         mesh.transform = delegate->GetTransform(GetId());
         mesh.visible = delegate->GetVisible(GetId());
@@ -69,6 +79,7 @@ public:
         VtVec3iArray triangles;
         VtIntArray parameters;
         util.ComputeTriangleIndices(&triangles, &parameters);
+        maskTopology_=topology; maskTriangles_=triangles; maskParameters_=parameters; pointCount_=points.size();
         // The USD -> UE basis already reverses handedness. UE's clockwise
         // front faces must not receive a second index reversal.
         for (const auto& triangle : triangles) for (int corner : {0, 1, 2}) {
@@ -85,6 +96,25 @@ public:
             } catch (const std::invalid_argument& error) { TF_RUNTIME_ERROR("%s at %s",error.what(),GetId().GetText()); return; }
         }
         mesh.uv = expanded<GfVec2f>(delegate, GetId(), TfToken("st"), triangles, parameters, util, HdTypeFloatVec2);
+        std::shared_ptr<const VtDictionary> selectedBindings;
+        { std::lock_guard lock(state->mutex); selectedBindings=state->wetBindings; }
+        const auto& wetBindings=*selectedBindings;
+        std::set<std::string> maskNames;
+        const auto needMask = [&](const std::string& path) {
+            HdUEMeshData target; target.bindingPath=path;
+            const auto name=HdUEWetValue<std::string>(HdUEWetSettings(wetBindings,target),"maskPrimvar","");
+            if (!name.empty()) maskNames.insert(name);
+        };
+        needMask(mesh.scenePath);
+        for (const auto& subset : topology.GetGeomSubsets()) needMask(SdfPath(mesh.scenePath).AppendChild(subset.id.GetNameToken()).GetString());
+        for (const auto& name : maskNames) {
+            const TfToken token(name);
+            const auto raw=delegate->Get(GetId(),token);
+            const auto domain=interpolation(delegate,GetId(),token);
+            try { mesh.masks[name]=HdUEExpandWetMask(raw,domain,points.size(),topology,triangles,parameters,util); }
+            catch (const std::invalid_argument& error) { mesh.maskErrors[name]=name+": "+error.what(); }
+        }
+        if (TfGetenvBool("HDUE_TRACE_SCENE",false)) TF_STATUS("hdUE wet sync %s scene=%s requested=%zu masks=%zu",GetId().GetText(),mesh.scenePath.c_str(),maskNames.size(),mesh.masks.size());
         std::lock_guard lock(state->mutex);
         if (mesh.material.empty() && mesh.sceneAsset.empty()) {
             HdUEMaterialData material;
@@ -120,9 +150,11 @@ public:
                 previous->second.normals != part.normals || previous->second.uv != part.uv || previous->second.transform != part.transform ||
                 previous->second.material != part.material || previous->second.visible != part.visible || previous->second.sceneAsset != part.sceneAsset);
             const auto id = part.id;
+            const bool maskChanged=previous==state->meshes.end() || previous->second.masks!=part.masks || previous->second.maskErrors!=part.maskErrors;
             state->meshes[id] = std::move(part);
             state->removed.erase(id);
             if (meshChanged) { state->dirtyMeshes.insert(id); ++state->revision; }
+            else if (maskChanged) ++state->revision;
             current.insert(id);
         }
         for (const auto& id : emitted_) if (!current.count(id)) {
@@ -130,6 +162,35 @@ public:
         }
         emitted_ = std::move(current);
         *bits = HdChangeTracker::Clean;
+    }
+    void RefreshSelectedMasks(HdSceneDelegate* delegate, HdUEState& state) const {
+        // A renderer-setting edit does not change a scene-index data source.
+        // Some hosts therefore do not run Rprim Sync for a new mask selector.
+        // Fetch only that primvar from the synchronized Hydra delegate, using
+        // the cached triangulation and subset corner mapping.
+        std::lock_guard lock(state.mutex);
+        const auto& bindings=*state.wetBindings;
+        std::set<std::string> needed;
+        for (const auto& id:emitted_) {
+            const auto part=state.meshes.find(id); if (part==state.meshes.end()) continue;
+            const auto name=HdUEWetValue<std::string>(HdUEWetSettings(bindings,part->second),"maskPrimvar","");
+            if (!name.empty() && !part->second.masks.count(name) && !part->second.maskErrors.count(name)) needed.insert(name);
+        }
+        for (const auto& name:needed) {
+            std::vector<float> values; std::string error;
+            HdMeshUtil util(&maskTopology_,GetId());
+            try { values=HdUEExpandWetMask(delegate->Get(GetId(),TfToken(name)),interpolation(delegate,GetId(),TfToken(name)),pointCount_,
+                maskTopology_,maskTriangles_,maskParameters_,util); }
+            catch (const std::invalid_argument& e) {error=name+": "+e.what();}
+            for (const auto& id:emitted_) {
+                auto part=state.meshes.find(id); if (part==state.meshes.end()) continue;
+                if (!error.empty()) part->second.maskErrors[name]=error;
+                else {
+                    auto& mask=part->second.masks[name]; mask.clear(); mask.reserve(part->second.points.size());
+                    for (size_t i=0;i<part->second.points.size();++i) mask.push_back(values.at(part->second.sourceCorners.empty()?i:part->second.sourceCorners[i]));
+                }
+            }
+        }
     }
     void Finalize(HdRenderParam* param) override {
         auto* state = static_cast<HdUEState*>(param);
@@ -244,6 +305,18 @@ public:
 };
 }
 HdRprim* HdUECreateMesh(const SdfPath& id) { return new Mesh(id); }
+void HdUERefreshWetMasks(HdUEState& state, HdRenderIndex* index) {
+    std::set<SdfPath> sources;
+    { std::lock_guard lock(state.mutex);
+      for (const auto& [id,part]:state.meshes) {
+        const auto name=HdUEWetValue<std::string>(HdUEWetSettings(*state.wetBindings,part),"maskPrimvar","");
+        if (!name.empty() && !part.masks.count(name) && !part.maskErrors.count(name)) sources.insert(SdfPath(part.sourceId));
+      }
+    }
+    for (const auto& id:sources)
+        if (const auto* mesh=dynamic_cast<const Mesh*>(index->GetRprim(id)))
+            if (auto* delegate=index->GetSceneDelegateForRprim(id)) mesh->RefreshSelectedMasks(delegate,state);
+}
 HdSprim* HdUECreateMaterial(const SdfPath& id) { return new Material(id); }
 HdSprim* HdUECreateLight(const SdfPath& id, uint32_t type) { return new Light(id, type); }
 PXR_NAMESPACE_CLOSE_SCOPE

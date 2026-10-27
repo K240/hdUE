@@ -10,6 +10,14 @@ _Static_assert(sizeof(HdueLightBatch) == 16, "light batch layout");
 _Static_assert(sizeof(HdueLightingStatus) == 56, "lighting status layout");
 _Static_assert(sizeof(HdueLightingApi) == 24, "lighting API layout");
 #include <stddef.h>
+#include "hdue/surface_api.h"
+_Static_assert(sizeof(HdueWetBinding) == 64, "wet binding layout");
+_Static_assert(offsetof(HdueWetBinding, mask) == 56, "wet mask pointer alignment");
+_Static_assert(sizeof(HdueSurfaceBatch) == 16, "surface snapshot layout");
+_Static_assert(sizeof(HdueSurfaceStatus) == 48, "surface status layout");
+_Static_assert(sizeof(HdueSurfaceApi) == 24, "surface API layout");
+_Static_assert(sizeof(HdueViewportWet) == 48, "viewport wet layout");
+_Static_assert(sizeof(HdueViewportSurfaces) == 40, "viewport surface layout");
 _Static_assert(sizeof(HdueViewportMaterial) == 32, "viewport material binding layout");
 _Static_assert(sizeof(HdueViewportMaterials) == 32, "viewport materials layout");
 

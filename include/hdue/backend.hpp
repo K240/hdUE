@@ -5,6 +5,7 @@
 #include "hdue/asset_api.h"
 #include "hdue/depth_api.h"
 #include "hdue/lighting_api.h"
+#include "hdue/surface_api.h"
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -24,6 +25,7 @@ public:
     const HdueAssetApi& asset_api() const { return assetApi_; }
     const HdueDepthApi& depth_api() const { return depthApi_; }
     const HdueLightingApi& lighting_api() const { return lightingApi_; }
+    const HdueSurfaceApi& surface_api() const { return surfaceApi_; }
     void initialize(const HdueInitDesc& desc);
     void shutdown();
     bool initialized() const { return initialized_; }
@@ -38,6 +40,7 @@ private:
     HdueAssetApi assetApi_{};
     HdueDepthApi depthApi_{};
     HdueLightingApi lightingApi_{};
+    HdueSurfaceApi surfaceApi_{};
     bool initialized_ = false;
 };
 

@@ -21,6 +21,11 @@ class Material(C.Structure):
     _fields_=[('material_id',C.c_char_p),('native_asset',C.c_char_p),('parameter_count',U32),('reserved',U32),('parameters',C.POINTER(Parameter))]
 class Materials(C.Structure):
     _fields_=[('struct_size',U32),('abi_version',U32),('session',U64),('material_count',U32),('reserved',U32),('materials',C.POINTER(Material))]
+class Wet(C.Structure):
+    _fields_=[(n,C.c_char_p) for n in ('prim_path','variant_asset','preview_asset','mask_primvar')]+[('amount',C.c_float),('roughness',C.c_float),('flags',U32),('reserved',U32)]
+class Surfaces(C.Structure):
+    _fields_=[('struct_size',U32),('abi_version',U32),('session',U64),('binding_count',U32),('mask_preview',U32),
+              ('bindings',C.POINTER(Wet)),('validation_error',C.c_char_p)]
 
 class Viewport:
     def __init__(self,runtime,plugin):
@@ -31,6 +36,10 @@ class Viewport:
         self.set=self.library.hdue_set_viewport_options; self.set.argtypes=[C.POINTER(Options)]; self.set.restype=Result
         self.set_materials=self.library.hdue_set_viewport_materials
         self.set_materials.argtypes=[C.POINTER(Materials)]; self.set_materials.restype=Result
+        self.set_surfaces=getattr(self.library,'hdue_set_viewport_surfaces',None)
+        if self.set_surfaces:
+            self.set_surfaces.argtypes=[C.POINTER(Surfaces)]; self.set_surfaces.restype=Result
+        if C.sizeof(Wet)!=48 or C.sizeof(Surfaces)!=40: raise RuntimeError('Invalid viewport surface ABI')
         if C.sizeof(Material)!=32 or C.sizeof(Materials)!=32: raise RuntimeError('Invalid viewport material ABI')
         api=Api(); runtime.check(runtime.library.hdue_get_api(1,C.sizeof(api),C.byref(api)),'readback API')
         self.poll=C.CFUNCTYPE(Result,U64,C.POINTER(Frame))(api.poll_frame)
@@ -94,6 +103,19 @@ class Viewport:
         code=self.set_materials(C.byref(update))
         if code==1: return False
         self.runtime.check(code,'viewport materials')
+        return True
+
+    def surfaces(self,session,bindings,preview=False,error=''):
+        if not self.set_surfaces:
+            if bindings or error: raise RuntimeError('Wet surfaces require the current delegate build; restart with the updated runtime.')
+            return True
+        data=(Wet*len(bindings))()
+        for i,(path,b) in enumerate(sorted(bindings.items())):
+            data[i]=Wet(path.encode(),b['asset'].encode(),b['previewAsset'].encode(),b['maskPrimvar'].encode(),b['amount'],b['roughness'],2 if b.get('graph') else 0,0)
+        update=Surfaces(C.sizeof(Surfaces),2,session,len(bindings),bool(preview),data,error.encode())
+        code=self.set_surfaces(C.byref(update))
+        if code==1: return False
+        self.runtime.check(code,'viewport surfaces')
         return True
 
     def depth_pixels(self,status):

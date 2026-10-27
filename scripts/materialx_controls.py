@@ -20,6 +20,9 @@ class MaterialXLibrary:
             if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
                 raise ValueError(f"MaterialX source changed; import/cook again: {path}")
         self.materials = {(str(Path(p["source"]).resolve()).casefold(), p["material"]): p for p in library["materials"]}
+        for entry in library['materials']:
+            entry['_hdue_identity']=hashlib.sha256(json.dumps(dict(asset=entry['asset'],model=entry['model'],
+                dependencies=sorted(library['dependencies'].values())),sort_keys=True).encode()).hexdigest()
         self.inline = {(str(Path(p["usd_stage"]).resolve()).casefold(),p["usd_material"]):p for p in library["materials"] if "usd_stage" in p}
         self.bound_entries = {}
         self.preparation_error = None
@@ -135,6 +138,15 @@ class MaterialXLibrary:
             view.SetRendererSetting("nativeMaterialParameters", overrides)
         self.owned, self.bindings = owned, bindings
         self.bound_entries=bound_entries
+        from surface_effects import resolve
+        try:
+            effects, self.surface_diagnostics = resolve(model.stage, bound_entries, model.currentFrame)
+        except ValueError as error:
+            view.SetRendererSetting("wetValidationError", str(error))
+            raise
+        view.SetRendererSetting("wetValidationError", "")
+        if effects != (view.GetRendererSetting("surfaceEffects") or {}):
+            view.SetRendererSetting("surfaceEffects", effects)
         # Keep only an identity token: retaining the Engine object postpones
         # its GL resource destruction until after the Qt context has closed.
         self.last_renderer, self.last_time, self.dirty = id(view._renderer), model.currentFrame, False

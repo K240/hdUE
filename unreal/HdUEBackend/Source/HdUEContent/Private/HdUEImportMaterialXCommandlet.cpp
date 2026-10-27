@@ -1,4 +1,5 @@
 #include "HdUEImportMaterialXCommandlet.h"
+#include "WetMaterials.h"
 #include "HdUEMaterialXAssetsPipeline.h"
 #include "InterchangeManager.h"
 #include "InterchangeSourceData.h"
@@ -29,6 +30,7 @@
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "Misc/SecureHash.h"
+#include "Misc/EngineVersion.h"
 #include "UObject/SavePackage.h"
 #include "UObject/StrongObjectPtr.h"
 
@@ -215,6 +217,11 @@ int32 UHdUEImportMaterialXCommandlet::Main(const FString& Params) {
                 Parameters.Add(MakeShared<FJsonValueObject>(Field));
             }
             Entry->SetArrayField(TEXT("parameters"), Parameters);
+            if (FParse::Param(*Params, TEXT("WetProfile"))) {
+                auto Effects = MakeShared<FJsonObject>();
+                Effects->SetObjectField(TEXT("wet"), HdUEPrepareWetMaterials(Material));
+                Entry->SetObjectField(TEXT("surface_effects"), Effects);
+            }
         }
         if (!SaveImported(Object)) return 5;
         Assets.Add(MakeShared<FJsonValueObject>(Entry));
@@ -227,6 +234,12 @@ int32 UHdUEImportMaterialXCommandlet::Main(const FString& Params) {
     Result->SetStringField(TEXT("source_sha1"), SourceHash); Result->SetObjectField(TEXT("dependencies_sha1"), Dependencies);
     Result->SetNumberField(TEXT("substrate"), CVar(TEXT("r.Substrate")));
     Result->SetNumberField(TEXT("gbuffer_format"), CVar(TEXT("r.Substrate.ProjectGBufferFormat")));
+    auto ShaderConfig = MakeShared<FJsonObject>();
+    ShaderConfig->SetStringField(TEXT("engine"), FEngineVersion::Current().ToString());
+    ShaderConfig->SetNumberField(TEXT("closures"), CVar(TEXT("r.Substrate.ProjectClosuresPerPixel")));
+    ShaderConfig->SetNumberField(TEXT("bytes"), CVar(TEXT("r.Substrate.BytesPerPixel")));
+    ShaderConfig->SetStringField(TEXT("target"), TEXT("Windows_SM6"));
+    Result->SetObjectField(TEXT("shader_config"), ShaderConfig);
     Result->SetNumberField(TEXT("materials"), MaterialCount); Result->SetArrayField(TEXT("assets"), Assets);
     FString Json; auto Writer = TJsonWriterFactory<>::Create(&Json);
     FJsonSerializer::Serialize(Result, Writer);

@@ -1,0 +1,213 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    def Xform "Dry_0" (
+        prepend references = @../wet_surface/asset.usda@
+    )
+    {
+        double3 xformOp:translate = (-135, 0, 60)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        over "Sphere" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </Looks/WaterCoating>
+            float[] primvars:wetness = [0] (
+                interpolation = "constant"
+            )
+        }
+    }
+
+    def Xform "Coated_1" (
+        prepend references = @../wet_surface/asset.usda@
+    )
+    {
+        double3 xformOp:translate = (0, 0, 60)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        over "Sphere" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </Looks/WaterCoating>
+            float[] primvars:wetness = [1] (
+                interpolation = "constant"
+            )
+        }
+    }
+
+    def Xform "Masked" (
+        prepend references = @../wet_surface/asset.usda@
+    )
+    {
+        double3 xformOp:translate = (135, 0, 60)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        over "Sphere" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </Looks/WaterCoating>
+            float[] primvars:wetness = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.82631546, 0.8235238, 0.8151966, 0.8014762, 0.7825975, 0.7588835, 0.7307399, 0.6986483, 0.6631577, 0.62487555, 0.5844567, 0.5425927, 0.5, 0.4574073, 0.41554335, 0.37512445, 0.33684227, 0.30135173, 0.2692601, 0.24111652, 0.2174025, 0.1985238, 0.18480344, 0.1764762, 0.17368455, 0.1764762, 0.18480344, 0.1985238, 0.2174025, 0.24111652, 0.2692601, 0.30135173, 0.33684227, 0.37512445, 0.41554335, 0.4574073, 0.5, 0.5425927, 0.5844567, 0.62487555, 0.6631577, 0.6986483, 0.7307399, 0.7588835, 0.7825975, 0.8014762, 0.8151966, 0.8235238, 0.82631546, 1, 1, 1, 1, 1, 1, 0.9575318, 0.89389765, 0.8235238, 0.7476144, 0.66746825, 0.5844567, 0.5, 0.41554335, 0.33253175, 0.2523856, 0.1764762, 0.10610237, 0.042468213, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.042468213, 0.10610237, 0.1764762, 0.2523856, 0.33253175, 0.41554335, 0.5, 0.5844567, 0.66746825, 0.7476144, 0.8235238, 0.89389765, 0.9575318, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.9783543, 0.8661165, 0.7476144, 0.62487555, 0.5, 0.37512445, 0.2523856, 0.13388345, 0.021645736, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.021645736, 0.13388345, 0.2523856, 0.37512445, 0.5, 0.62487555, 0.7476144, 0.8661165, 0.9783543, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.9783543, 0.8235238, 0.6631577, 0.5, 0.33684227, 0.1764762, 0.021645736, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.021645736, 0.1764762, 0.33684227, 0.5, 0.6631577, 0.8235238, 0.9783543, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.89389765, 0.6986483, 0.5, 0.30135173, 0.10610237, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.10610237, 0.30135173, 0.5, 0.6986483, 0.89389765, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.9575318, 0.7307399, 0.5, 0.2692601, 0.042468213, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.042468213, 0.2692601, 0.5, 0.7307399, 0.9575318, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.7588835, 0.5, 0.24111652, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.24111652, 0.5, 0.7588835, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.7825975, 0.5, 0.2174025, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.2174025, 0.5, 0.7825975, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.8014762, 0.5, 0.1985238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.1985238, 0.5, 0.8014762, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.8151966, 0.5, 0.18480344, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.18480344, 0.5, 0.8151966, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.8235238, 0.5, 0.1764762, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.1764762, 0.5, 0.8235238, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.82631546, 0.5, 0.17368455, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.17368455, 0.5, 0.82631546, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.8235238, 0.5, 0.1764762, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.1764762, 0.5, 0.8235238, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.8151966, 0.5, 0.18480344, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.18480344, 0.5, 0.8151966, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.8014762, 0.5, 0.1985238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.1985238, 0.5, 0.8014762, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.7825975, 0.5, 0.2174025, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.2174025, 0.5, 0.7825975, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.7588835, 0.5, 0.24111652, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.24111652, 0.5, 0.7588835, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.9575318, 0.7307399, 0.5, 0.2692601, 0.042468213, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.042468213, 0.2692601, 0.5, 0.7307399, 0.9575318, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.89389765, 0.6986483, 0.5, 0.30135173, 0.10610237, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.10610237, 0.30135173, 0.5, 0.6986483, 0.89389765, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.9783543, 0.8235238, 0.6631577, 0.5, 0.33684227, 0.1764762, 0.021645736, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.021645736, 0.1764762, 0.33684227, 0.5, 0.6631577, 0.8235238, 0.9783543, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.9783543, 0.8661165, 0.7476144, 0.62487555, 0.5, 0.37512445, 0.2523856, 0.13388345, 0.021645736, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.021645736, 0.13388345, 0.2523856, 0.37512445, 0.5, 0.62487555, 0.7476144, 0.8661165, 0.9783543, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.9575318, 0.89389765, 0.8235238, 0.7476144, 0.66746825, 0.5844567, 0.5, 0.41554335, 0.33253175, 0.2523856, 0.1764762, 0.10610237, 0.042468213, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.042468213, 0.10610237, 0.1764762, 0.2523856, 0.33253175, 0.41554335, 0.5, 0.5844567, 0.66746825, 0.7476144, 0.8235238, 0.89389765, 0.9575318, 1, 1, 1, 1, 1, 1, 0.82631546, 0.8235238, 0.8151966, 0.8014762, 0.7825975, 0.7588835, 0.7307399, 0.6986483, 0.6631577, 0.62487555, 0.5844567, 0.5425927, 0.5, 0.4574073, 0.41554335, 0.37512445, 0.33684227, 0.30135173, 0.2692601, 0.24111652, 0.2174025, 0.1985238, 0.18480344, 0.1764762, 0.17368455, 0.1764762, 0.18480344, 0.1985238, 0.2174025, 0.24111652, 0.2692601, 0.30135173, 0.33684227, 0.37512445, 0.41554335, 0.4574073, 0.5, 0.5425927, 0.5844567, 0.62487555, 0.6631577, 0.6986483, 0.7307399, 0.7588835, 0.7825975, 0.8014762, 0.8151966, 0.8235238, 0.82631546, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5] (
+                interpolation = "vertex"
+            )
+        }
+    }
+}
+
+def "Looks"
+{
+    def Material "SS_Coat"
+    {
+        token outputs:mtlx:surface.connect = </Looks/SS_Coat/MaterialX.outputs:surface>
+        token outputs:surface.connect = </Looks/SS_Coat/Preview.outputs:surface>
+
+        def Shader "MaterialX"
+        {
+            uniform token info:implementationSource = "sourceAsset"
+            uniform asset info:mtlx:sourceAsset = @../materialx/standard_surface.mtlx@
+            uniform token info:mtlx:sourceAsset:subIdentifier = "SS_Coat"
+            float inputs:coat = 0
+            float inputs:specular_roughness = 0.65
+            token outputs:surface
+        }
+
+        def Shader "Preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.4, 0.2, 0.08)
+            float inputs:roughness = 0.65
+            token outputs:surface
+        }
+    }
+
+    def Material "WaterCoating"
+    {
+        custom int hdue:substrate:version = 1
+        token outputs:hdue:surface.connect = </Looks/WaterCoating/Graph/layer.outputs:out>
+        token outputs:surface.connect = </Looks/WaterCoating/Preview.outputs:surface>
+
+        def "Graph"
+        {
+            def Shader "roughness"
+            {
+                uniform token info:id = "hdue:substrate:scalar"
+                string inputs:parameter_name = "WaterRoughness"
+                float inputs:value = 0.08
+                float outputs:out
+            }
+
+            def Shader "water"
+            {
+                uniform token info:id = "hdue:substrate:slab"
+                color3f inputs:diffuse_albedo = (0, 0, 0)
+                color3f inputs:f0 = (0.020059312, 0.020059312, 0.020059312)
+                color3f inputs:mfp = (1000000, 1000000, 1000000)
+                float inputs:roughness.connect = </Looks/WaterCoating/Graph/roughness.outputs:out>
+                string inputs:subsurface = "simple_volume"
+                token outputs:out
+            }
+
+            def Shader "amount"
+            {
+                uniform token info:id = "hdue:substrate:scalar"
+                string inputs:parameter_name = "Coverage"
+                float inputs:value = 1
+                float outputs:out
+            }
+
+            def Shader "clamp_amount"
+            {
+                uniform token info:id = "hdue:substrate:saturate"
+                float inputs:value.connect = </Looks/WaterCoating/Graph/amount.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "mask"
+            {
+                uniform token info:id = "hdue:substrate:primvar"
+                float inputs:default = 1
+                string inputs:primvar = "wetness"
+                float outputs:out
+            }
+
+            def Shader "coverage"
+            {
+                uniform token info:id = "hdue:substrate:multiply"
+                float inputs:a.connect = </Looks/WaterCoating/Graph/clamp_amount.outputs:out>
+                float inputs:b.connect = </Looks/WaterCoating/Graph/mask.outputs:out>
+                float outputs:out
+            }
+
+            def Shader "weight"
+            {
+                uniform token info:id = "hdue:substrate:weight"
+                token inputs:surface.connect = </Looks/WaterCoating/Graph/water.outputs:out>
+                float inputs:weight.connect = </Looks/WaterCoating/Graph/coverage.outputs:out>
+                token outputs:out
+            }
+
+            def Shader "base"
+            {
+                custom rel hdue:materialx = </Looks/SS_Coat>
+                uniform token info:id = "hdue:substrate:materialx"
+                token outputs:out
+            }
+
+            def Shader "layer"
+            {
+                uniform token info:id = "hdue:substrate:vertical"
+                token inputs:base.connect = </Looks/WaterCoating/Graph/base.outputs:out>
+                bool inputs:parameter_blending = 0
+                float inputs:thickness = 0.01
+                token inputs:top.connect = </Looks/WaterCoating/Graph/weight.outputs:out>
+                token outputs:out
+            }
+        }
+
+        def Shader "Preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.18, 0.18, 0.18)
+            token outputs:surface
+        }
+    }
+}
+
+def Camera "Camera"
+{
+    float2 clippingRange = (1, 5000)
+    float focalLength = 50
+    float horizontalAperture = 36
+    float verticalAperture = 20.25
+    matrix4d xformOp:transform = ( (1, 0, -0, 0), (0, 0.18237319193896595, 0.9832293826274687, 0), (0, -0.9832293826274686, 0.18237319193896592, 0), (0, -620, 174.99999999999997, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def "Lights"
+{
+    def RectLight "Key"
+    {
+        float inputs:height = 40
+        float inputs:intensity = 12
+        float inputs:width = 120
+        matrix4d xformOp:transform = ( (0.9284766908852591, -0.37139067635410367, 0, 0), (0.2721655269759086, 0.6804138174397715, 0.6804138174397715, 0), (-0.25269934785963444, -0.631748369649086, 0.7328281087929398, 0), (-99.99999999999999, -249.99999999999994, 349.9999999999999, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+    }
+
+    def RectLight "Fill"
+    {
+        float inputs:height = 200
+        float inputs:intensity = 1
+        float inputs:width = 140
+        matrix4d xformOp:transform = ( (0.37139067635410383, 0.9284766908852595, 0, 0), (-0.37795697393731387, 0.15118278957492554, 0.9133960203485085, -0), (0.848066914440948, -0.3392267657763792, 0.407072118931655, 0), (250, -100.00000000000001, 180, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+    }
+}

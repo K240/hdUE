@@ -1,0 +1,203 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    def Xform "Textured" (
+        prepend references = @../wet_surface/asset.usda@
+    )
+    {
+        double3 xformOp:translate = (0, 0, 60)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        over "Sphere" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </Looks/Textured>
+        }
+    }
+}
+
+def "Looks"
+{
+    def Material "Textured"
+    {
+        custom int hdue:substrate:version = 1
+        token outputs:hdue:surface.connect = </Looks/Textured/Graph/layer.outputs:out>
+        token outputs:surface.connect = </Looks/Textured/Preview.outputs:surface>
+
+        def "Graph"
+        {
+            def Shader "uv"
+            {
+                uniform token info:id = "hdue:substrate:uv"
+                float inputs:index = 0
+                float2 inputs:offset = (0.125, 0)
+                float2 inputs:scale = (2, 1)
+                float2 outputs:out
+            }
+
+            def Shader "base_color"
+            {
+                uniform token info:id = "hdue:substrate:texture"
+                string inputs:address = "wrap"
+                string inputs:color_space = "srgb"
+                asset inputs:file = @textures\color.png@
+                float2 inputs:uv.connect = </Looks/Textured/Graph/uv.outputs:out>
+                float outputs:a
+                float outputs:b
+                float outputs:g
+                color3f outputs:out
+                float outputs:r
+                color4f outputs:rgba
+            }
+
+            def Shader "packed_data"
+            {
+                uniform token info:id = "hdue:substrate:texture"
+                string inputs:address = "wrap"
+                string inputs:color_space = "raw"
+                asset inputs:file = @textures\packed.png@
+                float2 inputs:uv.connect = </Looks/Textured/Graph/uv.outputs:out>
+                float outputs:a
+                float outputs:b
+                float outputs:g
+                color3f outputs:out
+                float outputs:r
+                color4f outputs:rgba
+            }
+
+            def Shader "normal_texture"
+            {
+                uniform token info:id = "hdue:substrate:texture"
+                string inputs:address = "wrap"
+                string inputs:color_space = "raw"
+                asset inputs:file = @textures\normal.png@
+                float2 inputs:uv.connect = </Looks/Textured/Graph/uv.outputs:out>
+                float outputs:a
+                float outputs:b
+                float outputs:g
+                color3f outputs:out
+                float outputs:r
+                color4f outputs:rgba
+            }
+
+            def Shader "roughness"
+            {
+                uniform token info:id = "hdue:substrate:channel"
+                string inputs:channel = "g"
+                color4f inputs:value.connect = </Looks/Textured/Graph/packed_data.outputs:rgba>
+                float outputs:out
+            }
+
+            def Shader "image_mask"
+            {
+                uniform token info:id = "hdue:substrate:channel"
+                string inputs:channel = "a"
+                color4f inputs:value.connect = </Looks/Textured/Graph/packed_data.outputs:rgba>
+                float outputs:out
+            }
+
+            def Shader "normal_strength"
+            {
+                uniform token info:id = "hdue:substrate:scalar"
+                string inputs:parameter_name = "NormalStrength"
+                float inputs:value = 1
+                float outputs:out
+            }
+
+            def Shader "normal"
+            {
+                uniform token info:id = "hdue:substrate:normalmap"
+                color3f inputs:color.connect = </Looks/Textured/Graph/normal_texture.outputs:out>
+                bool inputs:flip_green = 1
+                float inputs:strength.connect = </Looks/Textured/Graph/normal_strength.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "base"
+            {
+                uniform token info:id = "hdue:substrate:slab"
+                color3f inputs:diffuse_albedo.connect = </Looks/Textured/Graph/base_color.outputs:out>
+                color3f inputs:f0 = (0.04, 0.04, 0.04)
+                color3f inputs:mfp = (0, 0, 0)
+                color3f inputs:normal.connect = </Looks/Textured/Graph/normal.outputs:out>
+                float inputs:roughness.connect = </Looks/Textured/Graph/roughness.outputs:out>
+                string inputs:subsurface = "none"
+                token outputs:out
+            }
+
+            def Shader "coat"
+            {
+                uniform token info:id = "hdue:substrate:slab"
+                color3f inputs:diffuse_albedo = (0, 0, 0)
+                color3f inputs:f0 = (0.02, 0.02, 0.02)
+                color3f inputs:mfp = (1000000, 1000000, 1000000)
+                float inputs:roughness = 0.06
+                string inputs:subsurface = "simple_volume"
+                token outputs:out
+            }
+
+            def Shader "masked_coat"
+            {
+                uniform token info:id = "hdue:substrate:weight"
+                token inputs:surface.connect = </Looks/Textured/Graph/coat.outputs:out>
+                float inputs:weight.connect = </Looks/Textured/Graph/image_mask.outputs:out>
+                token outputs:out
+            }
+
+            def Shader "layer"
+            {
+                uniform token info:id = "hdue:substrate:vertical"
+                token inputs:base.connect = </Looks/Textured/Graph/base.outputs:out>
+                bool inputs:parameter_blending = 0
+                float inputs:thickness = 0.01
+                token inputs:top.connect = </Looks/Textured/Graph/masked_coat.outputs:out>
+                token outputs:out
+            }
+        }
+
+        def Shader "Preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.18, 0.18, 0.18)
+            token outputs:surface
+        }
+    }
+}
+
+def Camera "Camera"
+{
+    float2 clippingRange = (1, 5000)
+    float focalLength = 40
+    float horizontalAperture = 36
+    float verticalAperture = 20.25
+    matrix4d xformOp:transform = ( (0.9656157585206697, 0.25997347344787264, -1.3877787807814454e-17, 0), (-0.07404240590682212, 0.2750146505110536, 0.9585847193293936, -0), (0.24920659907811654, -0.9256245108615757, 0.28480754180356177, 0), (70, -260, 140, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def "Lights"
+{
+    def RectLight "Key"
+    {
+        float inputs:height = 40
+        float inputs:intensity = 12
+        float inputs:width = 120
+        matrix4d xformOp:transform = ( (0.9284766908852591, -0.37139067635410367, 0, 0), (0.2721655269759086, 0.6804138174397715, 0.6804138174397715, 0), (-0.25269934785963444, -0.631748369649086, 0.7328281087929398, 0), (-99.99999999999999, -249.99999999999994, 349.9999999999999, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+    }
+
+    def RectLight "Fill"
+    {
+        float inputs:height = 200
+        float inputs:intensity = 1
+        float inputs:width = 140
+        matrix4d xformOp:transform = ( (0.37139067635410383, 0.9284766908852595, 0, 0), (-0.37795697393731387, 0.15118278957492554, 0.9133960203485085, -0), (0.848066914440948, -0.3392267657763792, 0.407072118931655, 0), (250, -100.00000000000001, 180, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+    }
+}

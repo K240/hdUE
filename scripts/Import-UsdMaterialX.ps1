@@ -7,6 +7,7 @@ param(
     [string]$HoudiniRoot='',
     [Nullable[double]]$Time=$null,
     [switch]$SkipBuild,
+    [switch]$WetProfile,
     [switch]$SkipCook
 )
 $ErrorActionPreference='Stop'
@@ -39,7 +40,7 @@ try {
     if ($LASTEXITCODE) {throw 'USD MaterialX graph export failed.'}
     $Manifest=Get-Content -Raw -LiteralPath (Join-Path $Export 'export.json') | ConvertFrom-Json
     $Imported=Join-Path $RunOutput 'ue-import'
-    & (Join-Path $PSScriptRoot 'Import-MaterialX.ps1') -Source @($Manifest.source) -Destination $Destination -OutputDirectory $Imported -EditorRoot $EditorRoot -SkipBuild:$SkipBuild -SkipCook:$SkipCook
+    & (Join-Path $PSScriptRoot 'Import-MaterialX.ps1') -Source @($Manifest.source) -Destination $Destination -OutputDirectory $Imported -EditorRoot $EditorRoot -SkipBuild:$SkipBuild -SkipCook:$SkipCook -WetProfile:$WetProfile
     & uv run --python 3.11 (Join-Path $PSScriptRoot 'bind_usd_materialx_library.py') (Join-Path $Export 'export.json') (Join-Path $Imported 'library.json') --output (Join-Path $RunOutput 'library.json')
     if ($LASTEXITCODE) {throw 'USD MaterialX registry binding failed.'}
 } finally {

@@ -31,7 +31,7 @@ def runtime_config():
     path=Path(os.environ['HDUE_RUNTIME_CONFIG']).resolve()
     config=json.loads(path.read_text(encoding='utf-8-sig'))
     if config.get('version')!=1: raise ValueError('Unsupported hdUE runtime config')
-    for key in ('backend_dll','runtime_project','asset_catalog','materialx_library'):
+    for key in ('backend_dll','runtime_project','asset_catalog','materialx_library','substrate_library'):
         if key in config:
             value=Path(config[key]); config[key]=str(value if value.is_absolute() else (path.parent/value).resolve())
     return config
@@ -51,7 +51,9 @@ class Host:
         self.runtime=Runtime(config['backend_dll'],config['runtime_project'],self.log_dir/'ue.log')
         self.api=Viewport(self.runtime,os.environ.get('HDUE_HOUDINI_PLUGIN',str(ROOT/'build/houdini-22.0.466/Release/hdUE_Houdini22.dll')))
         from hdue_materialx import PreparedMaterials
-        self.prepared_materials=PreparedMaterials()
+        from substrate_live import LivePreparation
+        self.live_substrate=LivePreparation(config['runtime_project'],self.log_dir)
+        self.prepared_materials=PreparedMaterials(self.live_substrate)
         from hdue_preparation import ViewportPreparation
         self.prepared_output=ViewportPreparation()
         self.material_error=None
@@ -78,14 +80,23 @@ class Host:
         data=dict(houdini=hou.applicationVersionString(),usd=Usd.GetVersion(),pid=os.getpid(),
                   owner=self.owner,ready=self.runtime.ready,closed=self.closed,
                   ticks=self.runtime.ticks,ue_initializations=self.runtime.initializations,
-                  runtime_state=self.runtime.status().state,error=error,texture_error=self.texture_error,material_error=self.material_error)
+                  runtime_state=self.runtime.status().state,error=error,texture_error=self.texture_error,material_error=self.material_error,
+                  substrate_preparation=self.live_substrate.status())
         (self.log_dir/'runtime-state.json').write_text(json.dumps(data,indent=2),encoding='utf-8')
+
+    def material_problem(self,message,session):
+        if session: self.prepared_materials.publish_error(session,self.api,message)
+        if message!=self.material_error:
+            _report(message)
+            hou.ui.setStatusMessage('hdUE: '+message,hou.severityType.Warning)
+        self.material_error=message
 
     def tick(self):
         global _failure
         if self.closed or not self.running: return
         try:
             state=self.api.status()
+            self.live_substrate.tick()
             node=current_settings_node()
             if node:
                 if time.monotonic()-self.last_textures>.25:
@@ -114,17 +125,31 @@ class Host:
                     if error and error!=self.texture_error: _report(error)
                     self.texture_error=error
                 if state['active']:
-                    stage=scene_viewer().stage()
+                    try:
+                        stage=scene_viewer().stage()
+                        if not stage:
+                            network=scene_viewer().pwd()
+                            display=network.displayNode() if isinstance(network,hou.LopNetwork) else scene_viewer().currentNode()
+                            if display and display.errors(): raise ValueError('; '.join(display.errors()))
+                    except (hou.Error,ValueError,RuntimeError) as error:
+                        self.material_problem(str(error),state['session']); stage=None
                     if stage:
                         if state['session'] and time.monotonic()-self.last_materials>.25:
                             self.last_materials=time.monotonic()
                             try:
-                                changed=self.prepared_materials.sync(stage,Usd.TimeCode(hou.frame()),node.evalParm('hdue_materialx_library'),state['session'],self.api)
+                                preview=node.parm('hdue_wet_mask_preview')
+                                self.prepared_materials.settings['wetMaskPreview']=bool(preview.eval()) if preview else False
+                                substrate=node.parm('hdue_substrate_library')
+                                automatic=node.parm('hdue_substrate_auto_prepare')
+                                self.live_substrate.enabled=bool(automatic.eval()) if automatic else True
+                                changed=self.prepared_materials.sync(stage,Usd.TimeCode(hou.frame()),node.evalParm('hdue_materialx_library'),state['session'],self.api,
+                                    substrate.eval() if substrate else None)
                                 if changed: scene_viewer().curViewport().draw()
+                                if self.material_error:
+                                    hou.ui.setStatusMessage('hdUE: material preparation is valid; rendering resumed.')
                                 self.material_error=None
                             except (ValueError,OSError,hou.Error) as error:
-                                if str(error)!=self.material_error: _report(str(error))
-                                self.material_error=str(error)
+                                self.material_problem(str(error),state['session'])
                         options=(state['session'],node.evalParm('hdue_mode')=='pathtraced',node.evalParm('hdue_samples'),
                                  UsdGeom.GetStageMetersPerUnit(stage),UsdGeom.GetStageUpAxis(stage)=='Z',hou.frame()/hou.fps())
                         if options!=self.last_options and self.api.options(*options[1:]):
@@ -153,6 +178,7 @@ class Host:
     def close(self):
         if self.closed: return
         self.running=False; self.timer.stop()
+        self.live_substrate.close()
         # destroyifdeactivated removes Hydra sessions before UE shutdown.
         try:
             for viewer in hou.ui.paneTabs():
@@ -170,13 +196,31 @@ def start():
     global _host,_failure
     if _host: return _host
     try:
+        import hdue_substrate
+        hdue_substrate.install()
         _host=Host()
         _report('UE 5.8.4 ready on the Houdini UI thread')
         input_usd=os.environ.get('HDUE_HOUDINI_INPUT')
         if input_usd: open_usd(input_usd)
+        elif os.environ.get('HDUE_HOUDINI_HIP'):
+            from PySide6 import QtCore
+            import hdefereval
+            QtCore.QTimer.singleShot(500,lambda:hdefereval.execute_deferred(activate_saved_hip))
         test=os.environ.get('HDUE_HOUDINI_TEST')
         if test:
-            if test=='references':
+            if test=='substrate-live':
+                import hdue_substrate_live_test
+                hdue_substrate_live_test.start(_host)
+            elif test=='substrate-textures':
+                import hdue_substrate_texture_test
+                hdue_substrate_texture_test.start(_host)
+            elif test=='substrate':
+                import hdue_substrate_test
+                hdue_substrate_test.start(_host)
+            elif test=='surfaces':
+                import hdue_surface_test
+                hdue_surface_test.start(_host)
+            elif test=='references':
                 import hdue_reference_test
                 hdue_reference_test.start(_host)
             elif test=='lighting':
@@ -205,6 +249,35 @@ def scene_viewer():
     viewer=hou.ui.paneTabOfType(hou.paneTabType.SceneViewer)
     if viewer is None: raise RuntimeError('Open a Scene Viewer pane for Solaris')
     return viewer
+
+def activate_saved_hip():
+    """Activate an already loaded HIP without adding a second source network."""
+    try:
+        stage_network=hou.node('/stage')
+        if not stage_network or not stage_network.displayNode(): return
+        viewer=scene_viewer(); viewer.setPwd(stage_network)
+        viewer.setCurrentNode(stage_network.displayNode())
+        controls=current_settings_node()
+        if controls: configure_live_preparation(controls)
+        viewer.setLinkGroup(hou.paneLinkType.Pinned)
+        activate()
+        stage=viewer.stage()
+        world=stage.GetPrimAtPath('/World') if stage else None
+        if world:
+            bounds=UsdGeom.BBoxCache(Usd.TimeCode(hou.frame()),['default','render']).ComputeWorldBound(world).ComputeAlignedRange()
+            if not bounds.IsEmpty():
+                viewer.curViewport().frameBoundingBox(hou.BoundingBox(*bounds.GetMin(),*bounds.GetMax()))
+        builder=hou.node(stage_network.userData('hdue:startupBuilder') or '')
+        if builder:
+            editor=hou.ui.paneTabOfType(hou.paneTabType.NetworkEditor)
+            if editor:
+                editor.setLinkGroup(hou.paneLinkType.Pinned); editor.setPwd(builder)
+                for child in builder.children(): child.setSelected(True)
+                editor.homeToSelection()
+            control=builder.node('amount') or builder.node('uv')
+            if control: control.setCurrent(True,clear_all_selected=True)
+        _report('Opened HIP: '+hou.hipFile.path())
+    except (hou.Error,ValueError,RuntimeError): _report(traceback.format_exc())
 
 def activate():
     if not _host: start()
@@ -235,6 +308,16 @@ def current_settings_node():
         inputs=node.inputs(); node=inputs[0] if inputs else None
     return node
 
+
+def configure_live_preparation(node):
+    if node.parm('hdue_substrate_auto_prepare'): return
+    group=node.parmTemplateGroup()
+    group.append(hou.ToggleParmTemplate('hdue_substrate_auto_prepare','Prepare graph edits automatically',default_value=True))
+    retry=hou.ButtonParmTemplate('hdue_substrate_retry','Retry material preparation')
+    retry.setScriptCallback('import hdue_houdini; hdue_houdini._host.live_substrate.retry()')
+    retry.setScriptCallbackLanguage(hou.scriptLanguage.Python); group.append(retry)
+    node.setParmTemplateGroup(group)
+
 def settings_node(input_node,metadata=None):
     from hdue_op_textures import prepare_stage
     prepare_stage(input_node.stage())
@@ -250,6 +333,14 @@ def settings_node(input_node,metadata=None):
     group.append(hou.StringParmTemplate('hdue_materialx_library','Cooked MaterialX library',1,
         default_value=(os.environ.get('HDUE_MATERIALX_LIBRARY') or runtime_config().get('materialx_library',''),),
         string_type=hou.stringParmType.FileReference))
+    group.append(hou.ToggleParmTemplate('hdue_wet_mask_preview','Preview Primvar mask',default_value=False))
+    group.append(hou.StringParmTemplate('hdue_substrate_library','Prepared Substrate library',1,
+        default_value=(os.environ.get('HDUE_SUBSTRATE_LIBRARY') or runtime_config().get('substrate_library',''),),
+        string_type=hou.stringParmType.FileReference))
+    group.append(hou.ToggleParmTemplate('hdue_substrate_auto_prepare','Prepare graph edits automatically',default_value=True))
+    retry=hou.ButtonParmTemplate('hdue_substrate_retry','Retry material preparation')
+    retry.setScriptCallback('import hdue_houdini; hdue_houdini._host.live_substrate.retry()')
+    retry.setScriptCallbackLanguage(hou.scriptLanguage.Python); group.append(retry)
     group.append(hou.StringParmTemplate('hdue_source_axis','Input up axis',1,default_value=(str(metadata['upaxis']).upper(),),menu_items=('Y','Z'),menu_labels=('Y','Z')))
     group.append(hou.FloatParmTemplate('hdue_source_units','Input meters per unit',1,default_value=(metadata['metersperunit'],),min=1e-9))
     node.setParmTemplateGroup(group)

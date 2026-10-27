@@ -107,6 +107,27 @@ def build(reports, destination):
             materials.append(dict(source=str(source), material=asset["name"], shader=shader.get("name"),
                 model=shader.tag, asset=asset["asset"], blend_mode=asset["blend_mode"],
                 bindings=bindings, parameters=asset["parameters"]))
+            if "surface_effects" in asset:
+                effects = asset["surface_effects"]
+                wet = effects.get("wet", {})
+                disallowed = ("subsurface", "transmission", "sheen") if shader.tag == "standard_surface" else (
+                    "subsurface_weight", "transmission_weight", "fuzz_weight")
+                reason = ""
+                if shader.tag not in ("standard_surface", "open_pbr_surface"):
+                    reason = "Wet v1 requires Standard Surface or OpenPBR."
+                for name in disallowed:
+                    field = shader.find(f"./input[@name='{name}']")
+                    if field is not None and (field.get("nodename") or field.get("nodegraph") or float(field.get("value", "0")) != 0):
+                        reason = f"Wet v1 does not support an active {name} input."
+                if reason:
+                    wet = dict(wet, supported=False, reason=reason)
+                # The imported graph and target configuration define the cache;
+                # mutable instance settings deliberately do not contribute.
+                wet["profile_key"] = hashlib.sha256(json.dumps(dict(
+                    source=report["source_sha1"], dependencies=sorted(report["dependencies_sha1"].values()),
+                    profile=1, substrate=report["substrate"], gbuffer=report["gbuffer_format"], shader_config=report.get("shader_config", {}), target="Windows_SM6"),
+                    sort_keys=True).encode()).hexdigest()
+                materials[-1]["surface_effects"] = dict(effects, wet=wet)
             count += 1
         if count != report["materials"]:
             raise ValueError("Incomplete MaterialX import receipt")

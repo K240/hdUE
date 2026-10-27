@@ -11,6 +11,30 @@ PXR_NAMESPACE_OPEN_SCOPE
 void HdUERegisterViewport(const std::shared_ptr<HdUEState>& state,HdUERenderDelegate* delegate) { Viewport=state; Delegate=delegate; }
 void HdUEUnregisterViewport(HdUERenderDelegate* delegate) { if(Delegate==delegate) { Delegate=nullptr; Viewport.reset(); } }
 PXR_NAMESPACE_CLOSE_SCOPE
+extern "C" HDUE_VIEWPORT_EXPORT HdueResult HDUE_CALL hdue_set_viewport_surfaces(const HdueViewportSurfaces* update) {
+    if (!update || update->struct_size!=sizeof(*update) || update->abi_version!=2 || update->mask_preview>1 ||
+        update->binding_count>100000 || (update->binding_count && !update->bindings)) return HDUE_INVALID_ARGUMENT;
+    const auto state=Viewport.lock();
+    if (!state || !Delegate) return HDUE_PENDING;
+    if (GetCurrentThreadId()!=state->createThread) return HDUE_WRONG_THREAD;
+    if (!update->session || update->session!=state->session) return HDUE_INVALID_STATE;
+    using namespace PXR_NS;
+    VtDictionary bindings;
+    for (uint32_t i=0;i<update->binding_count;++i) {
+        const auto& b=update->bindings[i];
+        if (!b.prim_path || !SdfPath::IsValidPathString(b.prim_path) || !SdfPath(b.prim_path).IsAbsolutePath() ||
+            !SdfPath(b.prim_path).IsPrimPath() || !b.variant_asset || !b.preview_asset || !b.mask_primvar ||
+            !std::isfinite(b.amount) || !std::isfinite(b.roughness) || bindings.count(b.prim_path) || b.reserved || (b.flags&~2u)) return HDUE_INVALID_ARGUMENT;
+        bindings[b.prim_path]=VtValue(VtDictionary{{"asset",VtValue(std::string(b.variant_asset))},
+            {"previewAsset",VtValue(std::string(b.preview_asset))},{"maskPrimvar",VtValue(std::string(b.mask_primvar))},
+            {"amount",VtValue(b.amount)},{"roughness",VtValue(b.roughness)}});
+        auto fields=bindings[b.prim_path].UncheckedGet<VtDictionary>(); fields["graph"]=VtValue(bool(b.flags&2)); bindings[b.prim_path]=VtValue(fields);
+    }
+    if (!update->validation_error || !*update->validation_error) Delegate->SetRenderSetting(TfToken("surfaceEffects"),VtValue(bindings));
+    Delegate->SetRenderSetting(TfToken("wetValidationError"),VtValue(std::string(update->validation_error?update->validation_error:"")));
+    Delegate->SetRenderSetting(TfToken("wetMaskPreview"),VtValue(bool(update->mask_preview)));
+    return HDUE_OK;
+}
 extern "C" HDUE_VIEWPORT_EXPORT HdueResult HDUE_CALL hdue_set_viewport_materials(const HdueViewportMaterials* update) {
     if (!update || update->struct_size!=sizeof(*update) || update->abi_version!=1 || update->reserved ||
         update->material_count>65536 || (update->material_count && !update->materials)) return HDUE_INVALID_ARGUMENT;

@@ -20,6 +20,8 @@ inline std::vector<HdUEMeshData> HdUEPartitionSubsets(
     HdUEMeshData prototype;
     prototype.id=mesh.id; prototype.material=mesh.material; prototype.scenePath=mesh.scenePath;
     prototype.sceneAsset=mesh.sceneAsset; prototype.transform=mesh.transform; prototype.visible=mesh.visible;
+    prototype.bindingPath=mesh.bindingPath; prototype.maskErrors=mesh.maskErrors;
+    prototype.sourceId=mesh.sourceId;
     std::vector<HdUEMeshData> parts{prototype};
     for (const auto& subset : topology.GetGeomSubsets()) {
         if (subset.type != HdGeomSubset::TypeFaceSet || subset.materialId.IsEmpty()) continue;
@@ -27,6 +29,7 @@ inline std::vector<HdUEMeshData> HdUEPartitionSubsets(
         parts.push_back(prototype);
         parts.back().id = subset.id.GetString();
         parts.back().material = subset.materialId.GetString();
+        parts.back().bindingPath = SdfPath(mesh.scenePath).AppendChild(subset.id.GetNameToken()).GetString();
         for (int face : subset.indices) {
             if (face < 0 || size_t(face) >= owners.size() || owners[face] != 0)
                 throw std::invalid_argument("Invalid or overlapping materialBind face subsets");
@@ -43,6 +46,8 @@ inline std::vector<HdUEMeshData> HdUEPartitionSubsets(
         for (size_t corner = triangle * 3; corner < triangle * 3 + 3; ++corner) {
             part.points.push_back(mesh.points[corner]); part.normals.push_back(mesh.normals[corner]);
             if (!mesh.uv.empty()) part.uv.push_back(mesh.uv[corner]);
+            part.sourceCorners.push_back(uint32_t(corner));
+            for (const auto& [name, values] : mesh.masks) part.masks[name].push_back(values.at(corner));
         }
     }
     parts.erase(std::remove_if(parts.begin(), parts.end(), [](const auto& part) { return part.points.empty(); }), parts.end());
