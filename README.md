@@ -233,3 +233,9 @@ The base ABI in `include/hdue/bridge.h` remains 96 bytes. It uses fixed-width PO
 Optional versioned extensions provide native assets, picking, material parameters, virtual-texture residency, depth, and viewport diagnostics. Calls validate versions, sizes, capacities, generations, and the owning thread.
 
 UE initializes once per process. Delegate destruction releases scene resources; process shutdown stops UE. GPU readbacks use fences. Completed images are returned without waiting synchronously for another Tick; stale generations are discarded. AOV maps pin immutable snapshots until Unmap. Color uses RGBA float and HDR output uses PFM. Shared GPU images remain a future optimization.
+
+## License
+
+Original hdUE code, documentation, and project-generated synthetic samples are available under the [MIT License](LICENSE).
+
+Unreal Engine, Houdini, third-party libraries, and separately supplied content retain their respective licenses. The MIT license does not grant rights to vendor SDKs, engine code, binaries, or third-party assets. Building, using, or distributing those components requires compliance with their applicable terms.
