@@ -239,3 +239,5 @@ UE initializes once per process. Delegate destruction releases scene resources; 
 Original hdUE code, documentation, and project-generated synthetic samples are available under the [MIT License](LICENSE).
 
 Unreal Engine, Houdini, third-party libraries, and separately supplied content retain their respective licenses. The MIT license does not grant rights to vendor SDKs, engine code, binaries, or third-party assets. Building, using, or distributing those components requires compliance with their applicable terms.
+
+See [Third-party notices](THIRD_PARTY_NOTICES.md) for the Unreal Engine acknowledgement, dependency license references, and redistribution scope.
