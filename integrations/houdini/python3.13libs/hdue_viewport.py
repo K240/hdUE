@@ -2,6 +2,7 @@
 import ctypes as C
 from pathlib import Path
 from hdue_runtime import Api,U32,U64,Result
+from material_api import Parameter
 
 class Frame(C.Structure):
     _fields_=[(n,U32) for n in ('struct_size','width','height','pixel_format','color_space','row_stride_bytes')]+[
@@ -16,6 +17,10 @@ class Options(C.Structure):
         ('meters_per_unit',C.c_double),('time_seconds',C.c_double)]
 class DepthApi(C.Structure):
     _fields_=[('struct_size',U32),('abi_version',U32),('set_enabled',C.c_void_p),('copy_depth',C.c_void_p)]
+class Material(C.Structure):
+    _fields_=[('material_id',C.c_char_p),('native_asset',C.c_char_p),('parameter_count',U32),('reserved',U32),('parameters',C.POINTER(Parameter))]
+class Materials(C.Structure):
+    _fields_=[('struct_size',U32),('abi_version',U32),('session',U64),('material_count',U32),('reserved',U32),('materials',C.POINTER(Material))]
 
 class Viewport:
     def __init__(self,runtime,plugin):
@@ -24,6 +29,9 @@ class Viewport:
         self.library=C.CDLL(str(Path(plugin).resolve()),winmode=0x1100)
         self.get=self.library.hdue_get_viewport_status; self.get.argtypes=[C.POINTER(Status)]; self.get.restype=Result
         self.set=self.library.hdue_set_viewport_options; self.set.argtypes=[C.POINTER(Options)]; self.set.restype=Result
+        self.set_materials=self.library.hdue_set_viewport_materials
+        self.set_materials.argtypes=[C.POINTER(Materials)]; self.set_materials.restype=Result
+        if C.sizeof(Material)!=32 or C.sizeof(Materials)!=32: raise RuntimeError('Invalid viewport material ABI')
         api=Api(); runtime.check(runtime.library.hdue_get_api(1,C.sizeof(api),C.byref(api)),'readback API')
         self.poll=C.CFUNCTYPE(Result,U64,C.POINTER(Frame))(api.poll_frame)
         self.copy=C.CFUNCTYPE(Result,U64,U64,C.c_void_p,U64)(api.copy_frame)
@@ -62,6 +70,31 @@ class Viewport:
         if code==HDUE_STALE_FRAME: return None
         self.runtime.check(code,'copy image')
         return f,pixels
+
+    def materials(self,session,assets,overrides):
+        storage=[]
+        bindings=(Material*len(assets))()
+        for index,(path,asset) in enumerate(sorted(assets.items())):
+            fields=overrides.get(path,{})
+            parameters=(Parameter*len(fields))()
+            storage.append(parameters)
+            for p,(name,value) in enumerate(sorted(fields.items())):
+                parameters[p].name=name.encode('utf-8')
+                if isinstance(value,str):
+                    parameters[p].type=2; parameters[p].texture_asset=value.encode('utf-8')
+                elif isinstance(value,(int,float)):
+                    parameters[p].type=0; parameters[p].value[0]=float(value)
+                else:
+                    parameters[p].type=1
+                    vector=list(value)
+                    vector.extend([0.]*(4-len(vector)))
+                    for component in range(4): parameters[p].value[component]=vector[component]
+            bindings[index]=Material(path.encode('utf-8'),asset.encode('utf-8'),len(fields),0,parameters)
+        update=Materials(C.sizeof(Materials),1,session,len(assets),0,bindings)
+        code=self.set_materials(C.byref(update))
+        if code==1: return False
+        self.runtime.check(code,'viewport materials')
+        return True
 
     def depth_pixels(self,status):
         frame=status['frame']

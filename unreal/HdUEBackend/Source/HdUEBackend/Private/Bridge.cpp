@@ -1,6 +1,10 @@
 #include "CoreMinimal.h"
 #if !WITH_EDITOR
 #include "hdue/bridge.h"
+#include "hdue/lighting_api.h"
+#include "Lighting.h"
+#include "EnvironmentBackground.h"
+#include "MegaLights/MegaLights.h"
 #define UELIBRARY_DLL_EXPORT
 #include "UELibraryAPI.h"
 #undef UELIBRARY_DLL_EXPORT
@@ -57,6 +61,9 @@ struct FReadbackJob {
     bool Preparing = false;
     bool DepthEnabled = false;
     TAtomic<bool> DepthQueued{false};
+    bool MegaLightsActive=false;
+    FTextureRHIRef Environment;
+    float EnvironmentScale=1;
 };
 struct FSession {
     TUniquePtr<FHdueScene> Scene;
@@ -81,6 +88,7 @@ struct FSession {
     TSharedPtr<FHdueVirtualTextureResidency, ESPMode::ThreadSafe> Residency;
     bool Preparing = false;
     bool ResidencyFailed = false;
+    bool MegaLightsActive=false;
 };
 // Attached only to hdUE's explicit view family. It receives the real scene
 // depth after the Lumen or Path Tracer primary pass and before post processing.
@@ -94,10 +102,16 @@ public:
     void SetupView(FSceneViewFamily&,FSceneView&) override {}
     void BeginRenderViewFamily(FSceneViewFamily&) override {}
     bool IsActiveThisFrame_Internal(const FSceneViewExtensionContext&) const override { return false; }
+    void PreRenderViewFamily_RenderThread(FRDGBuilder&,FSceneViewFamily& Family) override {
+        Job->MegaLightsActive=!Family.EngineShowFlags.PathTracing && MegaLights::IsEnabled(Family);
+    }
     void PrePostProcessPass_RenderThread(FRDGBuilder& GraphBuilder,const FSceneView& View,const FPostProcessingInputs& Inputs) override {
         if(!Inputs.SceneTextures) return;
         FRDGTextureRef Source=Inputs.SceneTextures->GetParameters()->SceneDepthTexture;
         if(!Source) return;
+        if(Job->Environment.IsValid()) HdUEDrawEnvironment(GraphBuilder,View,Inputs.SceneTextures->GetParameters()->SceneColorTexture,
+            Source,Job->Environment.GetReference(),Job->EnvironmentScale);
+        if(!Job->DepthEnabled) return;
         const FIntPoint Size(Session->Width,Session->Height);
         auto Desc=FRDGTextureDesc::Create2D(Size,PF_R32_FLOAT,FClearValueBinding::None,
             TexCreate_ShaderResource|TexCreate_RenderTargetable);
@@ -270,6 +284,8 @@ HdueResult HDUE_CALL RequestRender(HdueSession Handle, const HdueRenderRequest* 
     if (Request->mode == HDUE_PATH_TRACED && !HasRayTracing()) return HDUE_NOT_SUPPORTED;
     const auto Session = Runtime.Session;
     if (Request->generation <= Session->Request.generation) return HDUE_STALE_FRAME;
+    if(!Session->Scene->Lighting->GetError().IsEmpty()) return Fail(HDUE_ENGINE_ERROR,*Session->Scene->Lighting->GetError());
+    if(!Session->Scene->Lighting->Ready()) return HDUE_PENDING;
     HdueAssetSceneStatus Assets{}; Session->Scene->Assets.GetSceneStatus(Assets);
     if (Assets.loading) return HDUE_PENDING;
     if (Assets.failed) return Fail(HDUE_ENGINE_ERROR, UTF8_TO_TCHAR(Assets.message));
@@ -301,6 +317,8 @@ HdueResult HDUE_CALL RequestRender(HdueSession Handle, const HdueRenderRequest* 
     Runtime.World->SetShouldTick(Request->mode == HDUE_REALTIME);
     if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.PathTracing.SamplesPerPixel"))) CVar->Set(int32(Request->samples_per_pixel), ECVF_SetByCode);
     if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.PathTracing.Denoiser"))) CVar->Set(0, ECVF_SetByCode);
+    if (IConsoleVariable* CVar=IConsoleManager::Get().FindConsoleVariable(TEXT("r.PathTracing.VisibleLights")))
+        CVar->Set(Session->Scene->Lighting->BackgroundVisible()?2:0,ECVF_SetByCode);
     return HDUE_OK;
 }
 
@@ -313,6 +331,7 @@ void Draw(const TSharedPtr<FSession, ESPMode::ThreadSafe>& Session) {
     }
     FEngineShowFlags Flags(ESFIM_Game);
     Flags.SetPathTracing(PathTracing);
+    Flags.SetMegaLights(!PathTracing);
     Flags.SetScreenPercentage(false);
     Flags.SetTonemapper(false);
     Flags.SetEyeAdaptation(false);
@@ -344,12 +363,14 @@ void Draw(const TSharedPtr<FSession, ESPMode::ThreadSafe>& Session) {
     View->StartFinalPostprocessSettings(Options.ViewOrigin);
     View->FinalPostProcessSettings.AutoExposureMethod = AEM_Manual;
     View->FinalPostProcessSettings.AutoExposureBias = 0;
+    View->FinalPostProcessSettings.bMegaLights=!PathTracing;
     View->FinalPostProcessSettings.DynamicGlobalIlluminationMethod = Request.lumen_enabled ? EDynamicGlobalIlluminationMethod::Lumen : EDynamicGlobalIlluminationMethod::None;
     View->FinalPostProcessSettings.ReflectionMethod = Request.lumen_enabled ? EReflectionMethod::Lumen : EReflectionMethod::None;
     View->FinalPostProcessSettings.PathTracingSamplesPerPixel = Request.samples_per_pixel;
     View->FinalPostProcessSettings.PathTracingMaxBounces = Session->Scene->HasRefractiveMaterials() ? 16 : 8;
     View->FinalPostProcessSettings.LumenFrontLayerTranslucencyReflections = true;
     View->EndFinalPostprocessSettings(Options);
+    View->FinalPostProcessSettings.bMegaLights=!PathTracing;
     Family.Views.Add(View);
     Family.SetScreenPercentageInterface(new FLegacyScreenPercentageDriver(Family, 1.0f));
     FCanvas Canvas(Resource, nullptr, Runtime.World, Runtime.World->GetFeatureLevel());
@@ -361,8 +382,12 @@ void Draw(const TSharedPtr<FSession, ESPMode::ThreadSafe>& Session) {
     Job->RequestedAt = Session->RequestedAt;
     Job->Preparing = Session->Preparing;
     Job->DepthEnabled = Session->DepthEnabled;
+    if(!PathTracing && Session->Scene->Lighting->BackgroundVisible()) {
+        Job->Environment=Session->Scene->Lighting->EnvironmentTexture();
+        Job->EnvironmentScale=Session->Scene->Lighting->EnvironmentScale();
+    }
     Session->Pending = Job;
-    if(Job->DepthEnabled) Family.ViewExtensions.Add(FSceneViewExtensions::NewExtension<FHdueDepthCapture>(Session,Job));
+    Family.ViewExtensions.Add(FSceneViewExtensions::NewExtension<FHdueDepthCapture>(Session,Job));
     Renderer().BeginRenderingViewFamily(&Canvas, &Family);
     Canvas.Flush_GameThread();
     const auto State = Session->ViewState;
@@ -423,6 +448,7 @@ void PollReadback(const TSharedPtr<FSession, ESPMode::ThreadSafe>& Session) {
             Session->Pixels = MoveTemp(Pixels);
             Session->DepthPixels = MoveTemp(DepthPixels);
             Session->Frame = Info;
+            Session->MegaLightsActive=Job->MegaLightsActive;
         } else {
             Job->Failed.Store(true);
         }
@@ -436,7 +462,7 @@ HdueResult HDUE_CALL Tick() {
     if (CheckReady() != HDUE_OK) return CheckReady();
     if (UELibrary_Tick() != 0) return Fail(HDUE_ENGINE_ERROR, TEXT("UELibrary_Tick failed."));
     const auto Session = Runtime.Session;
-    if (Session) Session->Scene->Assets.Tick();
+    if (Session) {Session->Scene->Assets.Tick(); Session->Scene->Lighting->Tick();}
     if (!Session || !Session->HasRequest) return HDUE_OK;
     if (Session->Pending) {
         if (!Session->Pending->Complete.Load()) { PollReadback(Session); return HDUE_OK; }
@@ -535,6 +561,29 @@ HdueResult HDUE_CALL ApplyScene(HdueSession Handle, const HdueSceneBatch* Batch)
     if (!Session->Scene->Apply(*Batch, Runtime.Error)) return HDUE_ENGINE_ERROR;
     Runtime.Error.Empty();
     return HDUE_OK;
+}
+HdueResult HDUE_CALL UpsertLights(HdueSession Handle,const HdueLightBatch* Batch) {
+    if(CheckReady()!=HDUE_OK) return CheckReady();
+    if(!ValidSession(Handle) || !Batch) return HDUE_INVALID_ARGUMENT;
+    if(!Runtime.Session->Scene->Lighting->Apply(*Batch,Runtime.Error)) return HDUE_INVALID_ARGUMENT;
+    Runtime.Session->HasRequest=false; ReleaseResidency(Runtime.Session); Runtime.World->SetShouldTick(true);
+    return HDUE_OK;
+}
+HdueResult HDUE_CALL LightingStatus(HdueSession Handle,HdueLightingStatus* Status) {
+    if(CheckReady()!=HDUE_OK) return CheckReady();
+    if(!ValidSession(Handle) || !Status || Status->struct_size!=sizeof(*Status)) return HDUE_INVALID_ARGUMENT;
+    HdueLightingStatus Result{}; Result.struct_size=sizeof(Result);
+    const auto Session=Runtime.Session;
+    Session->Scene->Lighting->Status(Result);
+    static const auto* ProjectCVar=IConsoleManager::Get().FindConsoleVariable(TEXT("r.MegaLights.EnableForProject"));
+    static const auto* AllowedCVar=IConsoleManager::Get().FindConsoleVariable(TEXT("r.MegaLights.Allowed"));
+    if(ProjectCVar) Result.mega_lights_project=ProjectCVar->GetInt()!=0;
+    if(AllowedCVar) Result.mega_lights_allowed=AllowedCVar->GetInt()!=0;
+    FScopeLock Lock(&Session->FrameMutex);
+    if(Session->HasRequest && Session->Frame.generation==Session->Request.generation) {
+        Result.frame_id=Session->Frame.frame_id; Result.generation=Session->Frame.generation; Result.mega_lights_active=Session->MegaLightsActive;
+    }
+    *Status=Result; return HDUE_OK;
 }
 HdueResult HDUE_CALL Shutdown() {
     if (CheckOwner() != HDUE_OK) return HDUE_WRONG_THREAD;
@@ -678,6 +727,11 @@ extern "C" HDUE_EXPORT HdueResult HDUE_CALL hdue_get_depth_api(uint32 Version,ui
     if(!Api || Capacity<sizeof(*Api)) return HDUE_BUFFER_TOO_SMALL;
     if(Version!=HDUE_DEPTH_ABI_VERSION) return HDUE_ABI_MISMATCH;
     *Api={sizeof(*Api),HDUE_DEPTH_ABI_VERSION,EnableDepth,CopyDepth}; return HDUE_OK;
+}
+extern "C" HDUE_EXPORT HdueResult HDUE_CALL hdue_get_lighting_api(uint32 Version,uint32 Capacity,HdueLightingApi* Api) {
+    if(!Api || Capacity<sizeof(*Api)) return HDUE_BUFFER_TOO_SMALL;
+    if(Version!=HDUE_LIGHTING_ABI_VERSION) return HDUE_ABI_MISMATCH;
+    *Api={sizeof(*Api),HDUE_LIGHTING_ABI_VERSION,UpsertLights,LightingStatus}; return HDUE_OK;
 }
 #endif
 

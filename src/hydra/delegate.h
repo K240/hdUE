@@ -34,10 +34,13 @@ struct HdUEMaterialData {
 };
 struct HdUELightData {
     std::string id;
+    std::string texture;
     GfMatrix4d transform{1};
     GfVec3f color{1};
     uint32_t type = HDUE_DISTANT_LIGHT;
-    float intensity = 1, width = 1, height = 1;
+    float intensity = 1, width = 1, height = 1, length = 1, angle = .53f;
+    float diffuse=1, specular=1, coneAngle=180, coneSoftness=0;
+    uint32_t flags=HDUE_LIGHT_SHADOWS|HDUE_LIGHT_BACKGROUND|HDUE_LIGHT_MEGALIGHTS,textureFormat=HDUE_ENVIRONMENT_AUTOMATIC;
     bool visible = true, viewer = false;
 };
 struct HdUEState : HdRenderParam {

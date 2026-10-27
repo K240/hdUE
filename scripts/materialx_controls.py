@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from pxr import Gf, Sdf, UsdShade
-from usd_materialx_graph import graph_data, graph_signature
+from usd_materialx_graph import graph_data, graph_signature, rebase_graph
 from materialx_textures import validate_texture_sets
 
 
@@ -34,6 +34,33 @@ class MaterialXLibrary:
 
     def invalidate(self, *args):
         self.dirty = True
+
+    def inline_binding(self, prim, stage, time):
+        path=str(prim.GetPath())
+        stage_file=str(Path(stage.GetRootLayer().realPath).resolve()).casefold()
+        exact=self.inline.get((stage_file,path))
+        authored={str(spec.path.StripAllVariantSelections()) for spec in prim.GetPrimStack()}
+        candidates=[exact] if exact else [e for e in self.inline.values() if e['usd_material'] in authored]
+        if not candidates:
+            names={prim.GetName()} | {spec.path.name for spec in prim.GetPrimStack()}
+            candidates=[e for e in self.inline.values() if Sdf.Path(e['usd_material']).name in names]
+        if not candidates:
+            return None,[]
+        graph=graph_data(UsdShade.Material(prim),time)
+        matches=[]
+        for entry in candidates:
+            rebased=rebase_graph(graph,path,entry['usd_material'])
+            if graph_signature(rebased,[p['attribute'] for p in entry['usd_bindings']])==entry['usd_graph_signature']:
+                matches.append(entry)
+        if len(matches)!=1:
+            raise ValueError('MaterialX graph/static input changed or ambiguous; prepare/import/cook again: '+path)
+        entry=matches[0]
+        values=[]
+        for binding in entry['usd_bindings']:
+            attribute=path+binding['attribute'][len(entry['usd_material']):]
+            attr=stage.GetAttributeAtPath(attribute)
+            values.append((binding,attr.Get(time) if attr else None))
+        return entry,values
 
     def sync(self):
         try:
@@ -67,18 +94,8 @@ class MaterialXLibrary:
             if not connection:
                 continue
             path = str(prim.GetPath())
-            stage_file=str(Path(model.stage.GetRootLayer().realPath).resolve()).casefold()
-            entry=self.inline.get((stage_file,path))
-            if entry:
-                graph=graph_data(UsdShade.Material(prim),model.currentFrame)
-                mutable=[p["attribute"] for p in entry["usd_bindings"]]
-                if graph_signature(graph,mutable)!=entry["usd_graph_signature"]:
-                    raise ValueError(f"MaterialX graph/static input changed; prepare/import/cook again: {path}")
-                values=[]
-                for p in entry["usd_bindings"]:
-                    attr=model.stage.GetAttributeAtPath(p["attribute"])
-                    values.append((p,attr.Get(model.currentFrame) if attr else None))
-            else:
+            entry,values=self.inline_binding(prim,model.stage,model.currentFrame)
+            if not entry:
                 shader = UsdShade.Shader(connection[0].GetPrim())
                 source = shader.GetPrim().GetAttribute("info:mtlx:sourceAsset").Get()
                 name = shader.GetPrim().GetAttribute("info:mtlx:sourceAsset:subIdentifier").Get()

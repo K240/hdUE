@@ -17,14 +17,23 @@ from materialx_textures import udim_tiles
 # nodedef alone does not prove UE's importer supports the corresponding node.
 NODEDEFS={"ND_standard_surface_surfaceshader","ND_open_pbr_surface_surfaceshader",
           "ND_image_color3","ND_image_vector3","ND_normalmap_float",
-          "ND_texcoord_vector2","ND_multiply_color3"}
+          "ND_texcoord_vector2","ND_multiply_color3","ND_image_float",
+          "ND_multiply_float","ND_invert_float"}
 
 
-def texture_path(stage,item,time):
+def texture_path(stage,item,time,embedded=None):
     value=item["value"]
     if not isinstance(value,dict):
         raise ValueError(f"Texture needs an asset input: {item['attribute']}")
     raw=value["asset"]
+    if raw.startswith('opdef:'):
+        entry=(embedded or {}).get(raw)
+        if not entry:
+            raise ValueError('Embedded texture needs Houdini preparation: '+raw)
+        file=Path(entry['path']).resolve()
+        if not file.is_file() or hashlib.sha256(file.read_bytes()).hexdigest()!=entry['sha256']:
+            raise ValueError('Embedded texture changed; resolve again: '+raw)
+        return str(file),None
     if "<UDIM>" not in raw:
         if not value.get("resolved"):
             raise ValueError(f"Texture is unresolved: {item['attribute']}")
@@ -62,7 +71,7 @@ def texture_path(stage,item,time):
     return pattern,dict(pattern=pattern,tiles=tiles)
 
 
-def export(source, output, time=Usd.TimeCode.Default()):
+def export(source, output, time=Usd.TimeCode.Default(), texture_manifest=None):
     source=source.resolve()
     if output.exists():
         raise FileExistsError(f"Choose a fresh export directory: {output}")
@@ -74,6 +83,13 @@ def export(source, output, time=Usd.TimeCode.Default()):
     doc=mx.createDocument(); doc.setColorSpace("lin_rec709")
     entries=[]; texture_sets={}; texture_roles={}
     dependencies={}
+    embedded={}
+    if texture_manifest:
+        manifest=json.loads(texture_manifest.read_text(encoding='utf-8-sig'))
+        if manifest.get('version')!=1:
+            raise ValueError('Unsupported embedded texture manifest')
+        embedded=manifest['textures']
+        dependencies[str(texture_manifest.resolve())]=hashlib.sha256(texture_manifest.read_bytes()).hexdigest()
     for layer in stage.GetUsedLayers():
         if layer.realPath:
             file=Path(layer.realPath).resolve()
@@ -147,7 +163,7 @@ def export(source, output, time=Usd.TimeCode.Default()):
                     if exported[path].getCategory()=="texcoord" and name=="index" and value!=0:
                         raise ValueError(f"Only UV set 0 is supported: {item['attribute']}")
                     if declared.getType()=="filename":
-                        filename,tiles=texture_path(stage,item,time)
+                        filename,tiles=texture_path(stage,item,time,embedded)
                         sources=list(tiles["tiles"].values()) if tiles else [filename]
                         for source_file in sources:
                             texture=Path(source_file)
@@ -195,7 +211,7 @@ def export(source, output, time=Usd.TimeCode.Default()):
     # MaterialX writes literal <UDIM> inside attributes. Escape it so the
     # document also conforms to strict XML readers used by registry tooling.
     file.write_text(mx.writeToXmlString(doc).replace("<UDIM>","&lt;UDIM&gt;"),encoding="utf-8")
-    manifest=dict(version=1,usd_stage=str(source),source=str(file.resolve()),time=None if time.IsDefault() else time.GetValue(),materials=entries,dependencies=dependencies,texture_sets=list(texture_sets.values()))
+    manifest=dict(version=1,usd_stage=str(source),source=str(file.resolve()),time=None if time.IsDefault() else time.GetValue(),materials=entries,dependencies=dependencies,texture_sets=list(texture_sets.values()),embedded_textures=embedded)
     (output/"export.json").write_text(json.dumps(manifest,indent=2),encoding="utf-8")
     print(f"{file}: {len(entries)} inline USD MaterialX materials")
     return manifest
@@ -206,5 +222,6 @@ if __name__=="__main__":
     parser.add_argument("source",type=Path)
     parser.add_argument("--output",required=True,type=Path)
     parser.add_argument("--time",type=float)
+    parser.add_argument("--texture-manifest",type=Path)
     args=parser.parse_args()
-    export(args.source,args.output,Usd.TimeCode(args.time) if args.time is not None else Usd.TimeCode.Default())
+    export(args.source,args.output,Usd.TimeCode(args.time) if args.time is not None else Usd.TimeCode.Default(),args.texture_manifest)

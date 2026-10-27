@@ -7,7 +7,9 @@ from pxr import Sdf, Usd, UsdShade
 
 def value_data(value):
     if isinstance(value, Sdf.AssetPath):
-        return {"asset":value.path,"resolved":value.resolvedPath}
+        # Houdini resolves opdef: to the URI itself; standalone OpenUSD leaves
+        # it unresolved. Its identity must be independent of the host resolver.
+        return {"asset":value.path,"resolved":'' if value.path.startswith('opdef:') else value.resolvedPath}
     if value is None or isinstance(value,(str,bool,int)):
         return value
     if isinstance(value,float):
@@ -42,7 +44,13 @@ def graph_data(material, time=Usd.TimeCode.Default()):
                 return dict(node=str(shader.GetPath()),output=source.GetBaseName(),trace=[path,str(links[0])])
             result=resolve(source,seen+(path,))
             return dict(result,trace=[path]+result["trace"])
-        return dict(attribute=path,type=str(attr.GetTypeName()),value=value_data(attr.Get(time)),colorspace=str(attr.GetColorSpace()),trace=[path])
+        value=attr.Get(time)
+        original=attr.GetCustomDataByKey('hdueOpTexture')
+        if original and original.get('uri','').startswith('opdef:'):
+            current=value.path if isinstance(value,Sdf.AssetPath) else value
+            if current==original['resolved']:
+                value=Sdf.AssetPath(original['uri'],original['uri'])
+        return dict(attribute=path,type=str(attr.GetTypeName()),value=value_data(value),colorspace=str(attr.GetColorSpace()),trace=[path])
     def visit(shader):
         path=str(shader.GetPath())
         if path in visiting:
@@ -75,3 +83,19 @@ def graph_signature(graph, mutable=()):
             if item.get("attribute") in mutable:
                 item["value"]="<editable>"
     return hashlib.sha256(json.dumps(data,sort_keys=True,separators=(",",":")).encode()).hexdigest()
+
+
+def rebase_graph(graph, old_root, new_root):
+    """Rebase USD property identities after reference composition, not asset filenames."""
+    data=json.loads(json.dumps(graph))
+    def location(path):
+        return new_root+path[len(old_root):] if path==old_root or path.startswith(old_root+'/') or path.startswith(old_root+'.') else path
+    def port(item):
+        for key in ('node','attribute'):
+            if key in item: item[key]=location(item[key])
+        item['trace']=[location(p) for p in item.get('trace',[])]
+        return item
+    data['material']=location(data['material'])
+    data['terminal']=port(data['terminal'])
+    data['nodes']={location(path):dict(node,inputs={n:port(v) for n,v in node['inputs'].items()}) for path,node in data['nodes'].items()}
+    return data

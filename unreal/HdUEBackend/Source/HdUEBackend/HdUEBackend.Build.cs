@@ -7,7 +7,7 @@ public class HdUEBackend : ModuleRules
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
         PublicIncludePaths.Add(Path.GetFullPath(Path.Combine(ModuleDirectory, "../../../../include")));
         PublicDependencyModuleNames.AddRange(new[] { "Core", "CoreUObject", "Engine" });
-        PrivateDependencyModuleNames.AddRange(new[] { "RHI", "RenderCore", "Renderer", "Projects", "GeometryFramework", "GeometryCore", "ImageWrapper", "AssetRegistry" });
+        PrivateDependencyModuleNames.AddRange(new[] { "RHI", "RenderCore", "Renderer", "Projects", "GeometryFramework", "GeometryCore", "ImageWrapper", "ImageCore", "AssetRegistry" });
         if (Target.Type != TargetType.Editor)
         {
             // Pinned monolithic source target; private VT access is isolated in VirtualTextureResidency.cpp.

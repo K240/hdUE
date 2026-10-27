@@ -18,7 +18,7 @@ class Test:
         self.host=host; self.output=host.log_dir; self.frames=[]; self.capture_errors=[]; self.deadline=time.monotonic()+300
         self.captures=[]
         self.selection_overlay=False
-        self.api=Viewport(host.runtime,integration.ROOT/'build/houdini-22.0.466/Release/hdUE_Houdini22.dll')
+        self.api=host.api
         self.timer=QtCore.QTimer(); self.timer.timeout.connect(self.advance)
         self.steps=self.run(); self.timer.start(25)
         self.last_status=0

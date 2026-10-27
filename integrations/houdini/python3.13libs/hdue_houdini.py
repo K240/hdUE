@@ -31,7 +31,7 @@ def runtime_config():
     path=Path(os.environ['HDUE_RUNTIME_CONFIG']).resolve()
     config=json.loads(path.read_text(encoding='utf-8-sig'))
     if config.get('version')!=1: raise ValueError('Unsupported hdUE runtime config')
-    for key in ('backend_dll','runtime_project','asset_catalog'):
+    for key in ('backend_dll','runtime_project','asset_catalog','materialx_library'):
         if key in config:
             value=Path(config[key]); config[key]=str(value if value.is_absolute() else (path.parent/value).resolve())
     return config
@@ -49,7 +49,11 @@ class Host:
         os.environ['HDUE_BACKEND_DLL']=config['backend_dll']
         hou.putenv('HDUE_BACKEND_DLL',config['backend_dll'])
         self.runtime=Runtime(config['backend_dll'],config['runtime_project'],self.log_dir/'ue.log')
-        self.api=Viewport(self.runtime,ROOT/'build/houdini-22.0.466/Release/hdUE_Houdini22.dll')
+        self.api=Viewport(self.runtime,os.environ.get('HDUE_HOUDINI_PLUGIN',str(ROOT/'build/houdini-22.0.466/Release/hdUE_Houdini22.dll')))
+        from hdue_materialx import PreparedMaterials
+        self.prepared_materials=PreparedMaterials()
+        self.material_error=None
+        self.last_materials=0.
         self.viewer=None
         self.last_options=None
         self.closed=False
@@ -72,7 +76,7 @@ class Host:
         data=dict(houdini=hou.applicationVersionString(),usd=Usd.GetVersion(),pid=os.getpid(),
                   owner=self.owner,ready=self.runtime.ready,closed=self.closed,
                   ticks=self.runtime.ticks,ue_initializations=self.runtime.initializations,
-                  runtime_state=self.runtime.status().state,error=error,texture_error=self.texture_error)
+                  runtime_state=self.runtime.status().state,error=error,texture_error=self.texture_error,material_error=self.material_error)
         (self.log_dir/'runtime-state.json').write_text(json.dumps(data,indent=2),encoding='utf-8')
 
     def tick(self):
@@ -98,6 +102,15 @@ class Host:
                 if state['active']:
                     stage=scene_viewer().stage()
                     if stage:
+                        if state['session'] and time.monotonic()-self.last_materials>.25:
+                            self.last_materials=time.monotonic()
+                            try:
+                                changed=self.prepared_materials.sync(stage,Usd.TimeCode(hou.frame()),node.evalParm('hdue_materialx_library'),state['session'],self.api)
+                                if changed: scene_viewer().curViewport().draw()
+                                self.material_error=None
+                            except (ValueError,OSError,hou.Error) as error:
+                                if str(error)!=self.material_error: _report(str(error))
+                                self.material_error=str(error)
                         options=(state['session'],node.evalParm('hdue_mode')=='pathtraced',node.evalParm('hdue_samples'),
                                  UsdGeom.GetStageMetersPerUnit(stage),UsdGeom.GetStageUpAxis(stage)=='Z',hou.frame()/hou.fps())
                         if options!=self.last_options and self.api.options(*options[1:]):
@@ -146,7 +159,13 @@ def start():
         if input_usd: open_usd(input_usd)
         test=os.environ.get('HDUE_HOUDINI_TEST')
         if test:
-            if test=='optextures':
+            if test=='lighting':
+                import hdue_lighting_test
+                hdue_lighting_test.start(_host)
+            elif test=='materials':
+                import hdue_materialx_test
+                hdue_materialx_test.start(_host)
+            elif test=='optextures':
                 import hdue_op_texture_test
                 hdue_op_texture_test.start(_host)
             elif test=='viewport':
@@ -207,6 +226,9 @@ def settings_node(input_node,metadata=None):
     group.append(hou.StringParmTemplate('hdue_mode','Render mode',1,default_value=('realtime',),
         menu_items=('realtime','pathtraced'),menu_labels=('Lumen','Path Tracer')))
     group.append(hou.IntParmTemplate('hdue_samples','Path Tracer samples',1,default_value=(64,),min=1,max=4096))
+    group.append(hou.StringParmTemplate('hdue_materialx_library','Cooked MaterialX library',1,
+        default_value=(os.environ.get('HDUE_MATERIALX_LIBRARY') or runtime_config().get('materialx_library',''),),
+        string_type=hou.stringParmType.FileReference))
     group.append(hou.StringParmTemplate('hdue_source_axis','Input up axis',1,default_value=(str(metadata['upaxis']).upper(),),menu_items=('Y','Z'),menu_labels=('Y','Z')))
     group.append(hou.FloatParmTemplate('hdue_source_units','Input meters per unit',1,default_value=(metadata['metersperunit'],),min=1e-9))
     node.setParmTemplateGroup(group)
@@ -239,7 +261,14 @@ def settings_node(input_node,metadata=None):
 
 def normalize(node):
     from scene_space import normalize_stage
-    normalize_stage(node.editableStage(),node.evalParm('hdue_source_axis'),node.evalParm('hdue_source_units'))
+    stage=node.editableStage()
+    # Hydra instancing is not implemented. Expand references only in this
+    # generated layer so subsets and shaders inside instances remain editable.
+    while True:
+        instances=[prim for prim in stage.Traverse() if prim.IsInstance()]
+        if not instances: break
+        for prim in instances: prim.SetInstanceable(False)
+    normalize_stage(stage,node.evalParm('hdue_source_axis'),node.evalParm('hdue_source_units'))
 
 def cook(node):
     stage=node.editableStage()

@@ -1,0 +1,23 @@
+#include "/Engine/Public/Platform.ush"
+
+float4x4 ClipToTranslatedWorld;
+float3 TranslatedEye;
+float2 InverseViewSize;
+int2 ViewMin;
+int2 ViewSize;
+float RadianceScale;
+Texture2D<float> Depth;
+RWTexture2D<float4> Color;
+TextureCube<float4> Environment;
+SamplerState EnvironmentSampler;
+
+[numthreads(8,8,1)]
+void MainCS(uint3 DispatchId:SV_DispatchThreadID) {
+    if(any(DispatchId.xy>=uint2(ViewSize))) return;
+    int2 Pixel=int2(DispatchId.xy)+ViewMin;
+    if(Depth.Load(int3(Pixel,0))>0) return;
+    float2 UV=(float2(DispatchId.xy)+.5)*InverseViewSize;
+    float4 World=mul(float4(UV.x*2-1,1-UV.y*2,1,1),ClipToTranslatedWorld);
+    float3 Direction=normalize(World.xyz/World.w-TranslatedEye);
+    Color[Pixel]=float4(Environment.SampleLevel(EnvironmentSampler,Direction,0).rgb*RadianceScale,1);
+}

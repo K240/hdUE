@@ -59,6 +59,7 @@ Run commands from the repository root. Store installation locations in the ignor
 | `editor_root` | `HDUE_EDITOR_ROOT` | `-EditorRoot` |
 | `openusd_root` | `HDUE_OPENUSD_ROOT` | `-OpenUsdRoot` |
 | `houdini_root` | `HDUE_HOUDINI_ROOT` or `HFS` | `-HoudiniRoot` |
+| `houdini_build_root` | `HDUE_HOUDINI_BUILD_ROOT` | `-BuildDirectory` (Houdini build/launch scripts) |
 | `runtime_config` | `HDUE_RUNTIME_CONFIG` | `-RuntimeConfig` |
 | `review_scene` | `HDUE_REVIEW_SCENE` | `-InputUsd` |
 
@@ -100,13 +101,36 @@ Fresh verification evidence is written under `out/`. A successful exit code alon
 
 The launcher owns UE initialization, Tick, and shutdown on the UI thread. Use it rather than an unmanaged usdview process. Asynchronous scene processing is unsupported.
 
-Generic Hydra translation supports meshes, cameras, materials, and distant, sphere, and rect lights. Hydra instancing, curves, points, and volumes are not implemented.
+Generic Hydra translation supports meshes, cameras, materials, and distant, sphere, rect, disk, cylinder, and dome lights. Material-binding GeomSubsets partition triangles by their original USD face while preserving UVs, normals, transforms, visibility, and picking paths. Unassigned faces retain the mesh material; overlapping or invalid material subsets are rejected. Subset edits and removals update the generated meshes.
+
+Missing or zero normals are generated from area-weighted vertex adjacency before subset partitioning, so material boundaries share the same shading normals. Authored normals are retained. Author explicit face-varying normals or split vertices where hard edges are required; normal generation does not subdivide geometry or apply subdivision creases. The smoke fixture authors its box normals explicitly.
+
+Hydra instancing, curves, points, and volumes are not implemented. The Solaris settings subnet expands instanceable references in its own layer for editable mesh/material translation; point instancers remain unsupported.
 
 Camera controls include orbit, pan, and dolly. Continuous updates are coalesced. Lumen retains its ViewState during camera motion; scene, material, time, resolution, and Path Tracer request changes reset accumulation.
 
 The launcher supplies its own CPU picking path for generic meshes and supported native geometry. This is separate from standard Hydra ID AOVs and selection outlines. Native CPU picking requires readable, resident LOD0 data and rejects unsupported material deformation or Nanite overrides.
 
-Optional camera-following review lights are used when there are no active supported scene lights. Authored lights take precedence. Review lights are intended for inspection, not calibrated illumination. Dome/HDRI lighting is not implemented.
+Optional camera-following review lights are used when there are no active supported scene lights. Authored lights, including DomeLight, take precedence. Review lights are intended for inspection, not calibrated illumination.
+
+## Lights and HDR environments
+
+`DomeLight.inputs:texture:file` accepts HDR/EXR and ordinary image files. Environment maps must have a 2:1 latitude-longitude layout (`latlong` or `automatic`). Linear HDR values are retained during conversion to the SkyLight cubemap; unusually bright maps are scaled before half-float storage and rescaled for lighting and background drawing. HDR sources are interpreted in linear Rec.709/sRGB primaries; OCIO conversion and other environment layouts are not implemented.
+
+The dome's full transform, color, intensity, exposure, color temperature, visibility, and deletion affect lighting, reflections, and the background in Lumen and Path Tracer. Mapping follows USD's local +Y pole and +Z longitude origin independently of the stage up axis. Multiple domes are summed into one environment. `domeResolution` selects the cubemap face size (default 512, power of two from 32 to 2048). Decoded files are cached by path, size, and modification time and rechecked on submitted light updates. File changes alone do not trigger a viewport refresh. Path Tracer waits for cubemap upload and SkyLight filtering before starting a new accumulation.
+
+Local lights support temperature, exposure, normalization, shadows, diffuse/specular scales, source dimensions, and sphere-light cone angle/softness. RectLight also accepts image emission. DiskLight uses a masked rectangular source, and CylinderLight uses a capsule source; these are approximations. Area-light intensity is converted using projected source area in meters, with normalized intensity divided by source area. DistantLight retains the existing direct intensity-to-lux mapping. Arbitrary light linking, IES profiles, portals, and separate dome diffuse/specular scales are unsupported. Dome diffuse/specular must both be 1.
+
+MegaLights is enabled by default for supported local lights in real-time rendering. Directional lights use the regular directional-light path. Path Tracer uses its own lighting implementation. The render statistics report both project enablement and whether MegaLights actually ran for the delivered frame; supported D3D12 hardware and ray tracing remain required.
+
+The repository-owned fixture contains a procedural HDRI, a textured rect light, disk, cylinder, spot, directional, and 24 sphere lights:
+
+```powershell
+.\scripts\Test-Hydra.ps1 -InputUsd samples/lighting/lighting.usda -LightingTest -Mode both
+.\scripts\Launch-Houdini.ps1 -InputUsd samples/lighting/lighting.usda
+```
+
+Build, cook, and stage the updated backend together with the updated delegate. Light `op:` and `opdef:` texture inputs use the same Houdini preparation/cache path as material images.
 
 ## Houdini Solaris
 
@@ -166,6 +190,8 @@ Copernicus color outputs use 32-bit float linear Rec.709 with the default OCIO c
 
 Rendering currently connects these textures to base color. Direct MaterialX Image-to-Standard Surface/OpenPBR base-color connections receive a basic Preview Surface fallback while retaining the MaterialX terminal. Dynamic normal/roughness textures, alpha-to-opacity wiring, COP UDIM collections, and texture replacement inside cooked native materials are not implemented.
 
+Embedded `opdef:` images are also supported. Houdini extracts the original image bytes into immutable content-hash files without changing the source definition or USD asset. The runtime cache detects changed embedded content and cleans up on shutdown. MaterialX preparation automatically extracts these images when `houdini_root` is configured; `Import-UsdMaterialX.ps1 -HoudiniRoot` can select it explicitly. Cooked libraries retain the original URI identity and hashes, independently of the host USD resolver.
+
 ```powershell
 .\scripts\Test-HoudiniOpTextures.ps1
 ```
@@ -186,9 +212,11 @@ Prepared MaterialX rendering uses UE's editor-side Interchange importer to creat
   -MaterialXLibrary out/materialx-import/review/library.json
 ```
 
-Inline USD graphs use `Import-UsdMaterialX.ps1` with `samples/materialx/inline.usda` and a fresh output directory. The supported subset includes Standard Surface, OpenPBR, color/vector images, float normal-map strength, UV0 coordinates, and color multiplication. Nested NodeGraphs and interfaces are resolved during preparation. Unsupported nodes, cycles, unresolved images, incompatible connections, extra UV sets, volume, and displacement are rejected.
+Inline USD graphs use `Import-UsdMaterialX.ps1` with `samples/materialx/inline.usda` and a fresh output directory. The supported subset includes Standard Surface, OpenPBR, color/vector/float images, float normal-map strength, UV0 coordinates, color/float multiplication, and float inversion. Nested NodeGraphs and interfaces are resolved during preparation. Unsupported nodes, cycles, unresolved images, incompatible connections, extra UV sets, volume, and displacement are rejected.
 
-Published scalar and color inputs can be edited without resending geometry. Structural or source-file changes require preparation, cook, staging, and restart. Dependency hashes detect stale registries. Texture overrides require prepared native texture paths. Full registry integration currently uses usdview; Solaris provides only the basic fallback described above.
+Published scalar and color inputs can be edited without resending geometry. Structural or source-file changes require preparation, cook, staging, and restart. Dependency hashes detect stale registries. Texture overrides require prepared native texture paths.
+
+usdview and Solaris both accept the cooked registry through `-MaterialXLibrary`. In Solaris, the same file can be selected in the settings subnet's **Cooked MaterialX library** field or the local runtime profile's `materialx_library` key. Bindings follow reference composition and validate the graph before applying native assets and parameters on the owner thread. With no cooked library selected, Solaris uses the basic Preview Surface fallback described above. Restart with a staged runtime containing the prepared materials; importing alone does not add them to an already running UE process.
 
 ### Reference-safe sample
 
@@ -196,7 +224,7 @@ Use `samples/materialx/showcase_solaris.usda` with Solaris Asset Reference. Its 
 
 The original `showcase.usda` is a complete-stage sample. Its materials are outside the default geometry prim, so open it as a stage or sublayer. Referencing only the geometry prim drops its material bindings.
 
-Regenerate the reference-safe scene through `uv run` with the configured Houdini Python executable and `scripts/generate_solaris_materialx_sample.py`. The original sample and MaterialX files remain unchanged. Solaris displays Preview Surface fallbacks, not the complete native MaterialX appearance.
+Regenerate the reference-safe scene through `uv run` with the configured Houdini Python executable and `scripts/generate_solaris_materialx_sample.py`. The original sample and MaterialX files remain unchanged. Without a matching cooked library, Solaris displays Preview Surface fallbacks. Libraries prepared for the original composed graphs can also bind below a referenced root.
 
 ### Normal maps and UDIMs
 
@@ -235,7 +263,7 @@ Optical glass uses a local profile that selects meshes and supplies IOR, roughne
 
 The base ABI in `include/hdue/bridge.h` remains 96 bytes. It uses fixed-width POD fields, UTF-8 strings, opaque handles, and caller-owned buffers. UE, USD, STL objects, exceptions, and memory ownership do not cross the DLL boundary.
 
-Optional versioned extensions provide native assets, picking, material parameters, virtual-texture residency, depth, and viewport diagnostics. Calls validate versions, sizes, capacities, generations, and the owning thread.
+Optional versioned extensions provide native assets, picking, material parameters, lighting/HDRI diagnostics, virtual-texture residency, depth, and viewport diagnostics. Calls validate versions, sizes, capacities, generations, and the owning thread. `include/hdue/lighting_api.h` adds batched light updates without changing the base ABI.
 
 UE initializes once per process. Delegate destruction releases scene resources; process shutdown stops UE. GPU readbacks use fences. Completed images are returned without waiting synchronously for another Tick; stale generations are discarded. AOV maps pin immutable snapshots until Unmap. Color uses RGBA float and HDR output uses PFM. Shared GPU images remain a future optimization.
 

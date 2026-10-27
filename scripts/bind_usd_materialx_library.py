@@ -42,6 +42,7 @@ def bind(export_file, library_file, output):
     if entries:
         raise ValueError("Some USD materials were not imported")
     library["dependencies"].update(export["dependencies"])
+    library['embedded_textures']=export.get('embedded_textures',{})
     output.write_text(json.dumps(library,indent=2),encoding="utf-8")
     print(f"{output}: {len(library['materials'])} USD MaterialX bindings")
 

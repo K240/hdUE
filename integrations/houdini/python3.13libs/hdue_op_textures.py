@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 import hou
-from pxr import Sdf, UsdShade
+from pxr import Sdf, Usd, UsdShade, UsdLux
 
 _cache = None
 
@@ -52,6 +52,13 @@ class Cache:
                 hou.frame() if node.isTimeDependent(for_last_cook=True) else None)
 
     def resolve(self, uri, raw=False):
+        if uri.startswith('opdef:'):
+            from houdini_resources import embedded_image
+            entry=embedded_image(uri,self.directory.name)
+            # Raw/color interpretation does not alter embedded source bytes.
+            for interpretation in (False,True):
+                self.entries[(uri,interpretation)]=dict(stamp=entry['sha256'],path=entry['path'])
+            return entry['path']
         node, output = _source(uri)
         key = (uri, raw)
         previous = self.entries.get(key)
@@ -104,6 +111,13 @@ class Cache:
     def dirty(self, bridge):
         for uri in self.bindings.get(bridge.path(), ()):
             try:
+                if uri.startswith('opdef:'):
+                    stamp=hashlib.sha256(hou.readBinaryFile(uri)).hexdigest()
+                    if not any((uri,raw) in self.entries for raw in (False,True)):
+                        return True
+                    if any(self.entries[(uri,raw)]['stamp']!=stamp for raw in (False,True) if (uri,raw) in self.entries):
+                        return True
+                    continue
                 node, _ = _source(uri)
                 if not any((uri, raw) in self.entries for raw in (False, True)):
                     return True
@@ -134,8 +148,8 @@ def resolve_stage(stage, bridge):
     """Author only into the caller's editable LOP layer; keep upstream op: URIs."""
     references = set()
     for prim in list(stage.Traverse()):
-        shader = UsdShade.Shader(prim)
-        if not shader:
+        shader = UsdShade.ConnectableAPI(prim)
+        if not (prim.IsA(UsdShade.Shader) or prim.HasAPI(UsdLux.LightAPI)):
             continue
         for input_ in shader.GetInputs():
             attr = input_.GetAttr()
@@ -144,7 +158,7 @@ def resolve_stage(stage, bridge):
             previous = attr.GetCustomDataByKey('hdueOpTexture')
             if previous and uri == previous['resolved']:
                 uri = previous['uri']
-            if not uri.startswith('op:'):
+            if not uri.startswith(('op:','opdef:')):
                 continue
             references.add(uri)
             cache().bindings[bridge.path()] = references
@@ -161,9 +175,9 @@ def resolve_stage(stage, bridge):
 
 def prepare_stage(stage):
     """Export on the host thread, outside any LOP cook/Usd stage write lock."""
-    for prim in stage.Traverse():
-        shader = UsdShade.Shader(prim)
-        if not shader:
+    for prim in Usd.PrimRange.Stage(stage,Usd.TraverseInstanceProxies()):
+        shader = UsdShade.ConnectableAPI(prim)
+        if not (prim.IsA(UsdShade.Shader) or prim.HasAPI(UsdLux.LightAPI)):
             continue
         for input_ in shader.GetInputs():
             attr = input_.GetAttr()
@@ -172,7 +186,7 @@ def prepare_stage(stage):
             previous = attr.GetCustomDataByKey('hdueOpTexture')
             if previous and uri == previous['resolved']:
                 uri = previous['uri']
-            if uri.startswith('op:'):
+            if uri.startswith(('op:','opdef:')):
                 color_space = shader.GetInput('sourceColorSpace')
                 raw = bool(attr.GetColorSpace() == 'raw' or (color_space and color_space.Get() == 'raw'))
                 cache().resolve(uri, raw)

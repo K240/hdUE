@@ -3,12 +3,15 @@ param(
     [string]$RuntimeConfig='',
     [string]$InputUsd='',
     [string]$LogDirectory='',
-    [ValidateSet('integration','viewport','optextures')][string]$TestKind='integration',
+    [string]$BuildDirectory='',
+    [string]$MaterialXLibrary='',
+    [ValidateSet('integration','viewport','optextures','materials','lighting')][string]$TestKind='integration',
     [switch]$Test
 )
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'Local-Paths.ps1')
 $HoudiniRoot=Get-HdUELocalPath -Key houdini_root -Value $HoudiniRoot
+$BuildDirectory=Get-HdUELocalPath -Key houdini_build_root -Value $BuildDirectory -Optional
 $TaskRoot=Split-Path -Parent $PSScriptRoot
 $HoudiniExe=Join-Path $HoudiniRoot 'bin\houdini.exe'
 $Version=(Get-Item -LiteralPath $HoudiniExe).VersionInfo
@@ -22,16 +25,19 @@ if (-not $RuntimeConfig) {
 if (-not (Test-Path -LiteralPath $RuntimeConfig)) {throw 'Specify a prepared -RuntimeConfig.'}
 if (-not $LogDirectory) {$LogDirectory=Join-Path $TaskRoot ('out\houdini-22.0.466\session-'+(Get-Date -Format 'yyyyMMdd-HHmmss-fff'))}
 New-Item -ItemType Directory -Force -Path $LogDirectory | Out-Null
-$Dll=Join-Path $TaskRoot 'build\houdini-22.0.466\Release\hdUE_Houdini22.dll'
+$DelegateBuild=if ($BuildDirectory) {[IO.Path]::GetFullPath($BuildDirectory)} else {Join-Path $TaskRoot 'build\houdini-22.0.466'}
+$Dll=Join-Path $DelegateBuild 'Release\hdUE_Houdini22.dll'
 if (-not (Test-Path -LiteralPath $Dll)) {throw 'Run Build-Houdini.ps1 first.'}
-$Names=@('HFS','PATH','PYTHONPATH','HOUDINI_PATH','PXR_PLUGINPATH_NAME','HOUDINI_USER_PREF_DIR','HOUDINI_NO_START_PAGE_SPLASH','HDUE_HOUDINI_ENABLE','HDUE_RUNTIME_CONFIG','HDUE_HOUDINI_INPUT','HDUE_HOUDINI_LOG_DIR','HDUE_HOUDINI_TEST')
+$Names=@('HFS','PATH','PYTHONPATH','HOUDINI_PATH','PXR_PLUGINPATH_NAME','HOUDINI_USER_PREF_DIR','HOUDINI_NO_START_PAGE_SPLASH','HDUE_HOUDINI_ENABLE','HDUE_RUNTIME_CONFIG','HDUE_HOUDINI_INPUT','HDUE_HOUDINI_LOG_DIR','HDUE_HOUDINI_TEST','HDUE_HOUDINI_PLUGIN','HDUE_MATERIALX_LIBRARY')
 $Previous=@{}; foreach ($Name in $Names) {$Previous[$Name]=[Environment]::GetEnvironmentVariable($Name,'Process')}
 try {
     $env:HFS=$HoudiniRoot
     $env:PATH="$HoudiniRoot\bin;$HoudiniRoot\python313;$env:PATH"
     $env:PYTHONPATH='' # Houdini must use its own Python/USD, not standalone usdview.
     $env:HOUDINI_PATH="$TaskRoot\integrations\houdini;"+$(if ($Previous.HOUDINI_PATH) {$Previous.HOUDINI_PATH} else {'&'})
-    $env:PXR_PLUGINPATH_NAME="$HoudiniRoot\bin\usd_plugins;$HoudiniRoot\houdini\dso\usd_plugins;$TaskRoot\build\houdini-22.0.466\resources"
+    $env:PXR_PLUGINPATH_NAME="$HoudiniRoot\bin\usd_plugins;$HoudiniRoot\houdini\dso\usd_plugins;$DelegateBuild\resources"
+    $env:HDUE_HOUDINI_PLUGIN=$Dll
+    $env:HDUE_MATERIALX_LIBRARY=if ($MaterialXLibrary) {[IO.Path]::GetFullPath($MaterialXLibrary)} else {''}
     $env:HDUE_HOUDINI_ENABLE='1'
     $env:HDUE_RUNTIME_CONFIG=[IO.Path]::GetFullPath($RuntimeConfig)
     $env:HDUE_HOUDINI_INPUT=if ($InputUsd) {[IO.Path]::GetFullPath($InputUsd)} else {''}

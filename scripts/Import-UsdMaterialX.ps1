@@ -4,6 +4,7 @@ param(
     [string]$Destination='/Game/HdUE/UsdMaterialX',
     [string]$OpenUsdRoot='',
     [string]$EditorRoot='',
+    [string]$HoudiniRoot='',
     [Nullable[double]]$Time=$null,
     [switch]$SkipBuild,
     [switch]$SkipCook
@@ -20,10 +21,19 @@ New-Item -ItemType Directory -Path $RunOutput -Force | Out-Null
 $PreviousPath=$env:PATH
 $PreviousPythonPath=$env:PYTHONPATH
 try {
-    $env:PATH="$OpenUsdRoot\bin;$OpenUsdRoot\lib;$env:PATH"
-    $env:PYTHONPATH="$OpenUsdRoot\lib\python"
     $Export=Join-Path $RunOutput 'export'
     $Arguments=@($InputUsd,'--output',$Export)
+    $HoudiniRoot=Get-HdUELocalPath -Key houdini_root -Value $HoudiniRoot -Optional
+    if ($HoudiniRoot) {
+        $env:PATH="$HoudiniRoot\bin;$PreviousPath"
+        $env:PYTHONPATH=''
+        $Embedded=Join-Path $RunOutput 'embedded'
+        & uv run -- (Join-Path $HoudiniRoot 'bin\hython.exe') (Join-Path $PSScriptRoot 'resolve_houdini_textures.py') $InputUsd --output $Embedded
+        if ($LASTEXITCODE) {throw 'Houdini embedded texture preparation failed.'}
+        $Arguments+=@('--texture-manifest',(Join-Path $Embedded 'textures.json'))
+    }
+    $env:PATH="$OpenUsdRoot\bin;$OpenUsdRoot\lib;$PreviousPath"
+    $env:PYTHONPATH="$OpenUsdRoot\lib\python"
     if ($null -ne $Time) {$Arguments+=@('--time',$Time.ToString([Globalization.CultureInfo]::InvariantCulture))}
     & uv run --python 3.11 --script (Join-Path $PSScriptRoot 'export_usd_materialx.py') @Arguments
     if ($LASTEXITCODE) {throw 'USD MaterialX graph export failed.'}

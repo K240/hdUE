@@ -10,6 +10,7 @@ function Get-HdUELocalPath {
         engine_root='HDUE_ENGINE_ROOT'; editor_root='HDUE_EDITOR_ROOT';
         openusd_root='HDUE_OPENUSD_ROOT'; houdini_root='HDUE_HOUDINI_ROOT';
         runtime_config='HDUE_RUNTIME_CONFIG'; review_scene='HDUE_REVIEW_SCENE'
+        houdini_build_root='HDUE_HOUDINI_BUILD_ROOT'
     }
     if (-not $Variables.ContainsKey($Key)) { throw "Unknown local path key: $Key" }
     $Resolved=[Environment]::GetEnvironmentVariable($Variables[$Key],'Process')

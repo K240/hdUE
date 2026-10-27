@@ -21,6 +21,8 @@
 #include "pxr/usd/usdGeom/metrics.h"
 #include "pxr/usd/usdGeom/xformable.h"
 #include "pxr/usd/usdGeom/pointInstancer.h"
+#include "pxr/usd/usdLux/domeLight.h"
+#include "pxr/usd/usdLux/rectLight.h"
 #include "pxr/usdImaging/usdImaging/delegate.h"
 #include <chrono>
 #include <cmath>
@@ -54,7 +56,7 @@ struct Options {
     std::string mode = "both", camera = "/Camera";
     uint32_t width = 640, height = 360, cycles = 1;
     double time = 0, timeout = 120;
-    bool selfTest = false;
+    bool selfTest = false, lightingTest = false;
     VtDictionary meshes, materials;
 };
 Options parse(int argc, wchar_t** argv) {
@@ -62,6 +64,7 @@ Options parse(int argc, wchar_t** argv) {
     for (int i = 1; i < argc; ++i) {
         const std::wstring key = argv[i];
         if (key == L"--self-test") { out.selfTest = true; continue; }
+        if (key == L"--lighting-test") { out.lightingTest = true; continue; }
         if (i + 1 == argc) throw std::runtime_error("Missing option value");
         const std::filesystem::path value = argv[++i];
         if (key == L"--backend") out.dll = std::filesystem::absolute(value);
@@ -148,12 +151,25 @@ std::vector<float> render(HdEngine& engine, HdRenderIndex* index, HdTaskSharedPt
     const std::string modeName = mode.IsHolding<std::string>() ? mode.UncheckedGet<std::string>() : "realtime";
     const int samples = stat<int>(stats, "completedSamples", 0);
     if (modeName == "pathtraced") check(samples >= 64, "Path Tracer did not reach 64 samples through Hydra");
+    if (options.lightingTest) {
+        check(!stat<bool>(stats,"environmentPending",true),"Environment was not ready at convergence");
+        check(stat<bool>(stats,"megaLightsProject",false) && stat<bool>(stats,"megaLightsAllowed",false),"MegaLights project settings are disabled");
+        check(stat<bool>(stats,"megaLightsActive",false)==(modeName=="realtime"),"Unexpected active MegaLights rendering path");
+    }
     if (comma) metrics << ",\n"; comma = true;
     metrics << "    {\"label\":\"" << label << "\",\"mode\":\"" << modeName << "\",\"width\":" << width << ",\"height\":" << height
         << ",\"generation\":" << stat<uint64_t>(stats, "generation", 0) << ",\"samples\":" << samples << ",\"seconds\":" << elapsed
         << ",\"delivered_fps\":" << delivered / std::max(elapsed, 1e-9) << ",\"readback_ms\":" << stat<double>(stats, "readbackMs", 0)
         << ",\"meshes\":" << stat<int>(stats, "meshes", 0) << ",\"materials\":" << stat<int>(stats, "materials", 0)
-        << ",\"lights\":" << stat<int>(stats, "lights", 0) << ",\"triangles\":" << stat<int>(stats, "triangles", 0) << ",\"first_frame_ms\":" << firstFrameMs << ",\"gpu_local_memory_bytes\":";
+        << ",\"lights\":" << stat<int>(stats, "lights", 0) << ",\"triangles\":" << stat<int>(stats, "triangles", 0)
+        << ",\"maximum_rgb\":" << maximum << ",\"dome_lights\":" << stat<int>(stats,"domeLights",0)
+        << ",\"environment_pending\":" << stat<bool>(stats,"environmentPending",false)
+        << ",\"environment_cube_resolution\":" << stat<int>(stats,"environmentCubeResolution",0)
+        << ",\"environment_max_radiance\":" << stat<float>(stats,"environmentMaxRadiance",0)
+        << ",\"mega_lights_project\":" << stat<bool>(stats,"megaLightsProject",false)
+        << ",\"mega_lights_allowed\":" << stat<bool>(stats,"megaLightsAllowed",false)
+        << ",\"mega_lights_active\":" << stat<bool>(stats,"megaLightsActive",false)
+        << ",\"first_frame_ms\":" << firstFrameMs << ",\"gpu_local_memory_bytes\":";
     const auto gpuMemory = hdue::gpu_memory_bytes();
     if (gpuMemory) metrics << *gpuMemory; else metrics << "null";
     metrics << "}";
@@ -208,14 +224,56 @@ void cycle(HdRendererPlugin* plugin, const Options& options, uint32_t cycleIndex
             imaging.ApplyPendingUpdates();
             return render(engine, index.get(), tasks, buffer, raw, options, prefix + label, metrics, comma);
         };
-        std::vector<float> previous;
+        std::vector<float> previous, realtimeReference;
         if (options.mode != "pathtraced") {
             raw->SetRenderSetting(TfToken("renderMode"), VtValue(std::string("realtime")));
             previous = capture("realtime");
+            if(options.lightingTest) realtimeReference=previous;
         }
         if (options.mode != "realtime") {
             raw->SetRenderSetting(TfToken("renderMode"), VtValue(std::string("pathtraced")));
             previous = capture("pathtraced");
+        }
+        if (options.lightingTest) {
+            auto dome=UsdLuxDomeLight(stage->GetPrimAtPath(SdfPath("/World/Lights/Dome")));
+            auto rect=UsdLuxRectLight(stage->GetPrimAtPath(SdfPath("/World/Lights/Rect")));
+            check(bool(dome) && bool(rect),"Lighting test requires samples/lighting/lighting.usda");
+            check(backend->lighting_api().get_status!=nullptr,"Lighting extension is missing");
+            const auto session=stat<uint64_t>(raw->GetRenderStats(),"sessionHandle",0);
+            HdueLightingStatus status{}; status.struct_size=sizeof(status);
+            backend->require(backend->lighting_api().get_status(session,&status),"lighting status");
+            check(status.dome_count==1 && status.environment_max_radiance>1,"HDR environment lost its dynamic range");
+            HdueLight invalid{}; invalid.struct_size=sizeof(invalid); invalid.id="invalid";
+            HdueLightBatch invalidBatch{sizeof(HdueLightBatch),1,&invalid};
+            check(backend->lighting_api().upsert(session,&invalidBatch)==HDUE_INVALID_ARGUMENT,"Invalid light was accepted");
+            if(!realtimeReference.empty()) previous=realtimeReference;
+            raw->SetRenderSetting(TfToken("renderMode"),VtValue(std::string("realtime")));
+            dome.GetExposureAttr().Set(-1.f);
+            auto next=capture("hdri-exposure"); changed(previous,next,"HDRI exposure"); previous=std::move(next);
+            dome.GetPrim().GetAttribute(TfToken("xformOp:rotateY")).Set(180.f);
+            next=capture("hdri-rotation"); changed(previous,next,"HDRI rotation"); previous=std::move(next);
+            dome.GetColorAttr().Set(GfVec3f(.15f,.5f,1.f));
+            next=capture("hdri-tint"); changed(previous,next,"HDRI color"); previous=std::move(next);
+            UsdGeomImageable(dome.GetPrim()).MakeInvisible();
+            next=capture("hdri-hidden"); changed(previous,next,"HDRI visibility"); previous=std::move(next);
+            check(stat<int>(raw->GetRenderStats(),"domeLights",-1)==0,"Hidden dome remains active");
+            UsdGeomImageable(dome.GetPrim()).MakeVisible();
+            dome.GetExposureAttr().Set(-2.f); dome.GetColorAttr().Set(GfVec3f(1));
+            dome.GetPrim().GetAttribute(TfToken("xformOp:rotateY")).Set(0.f);
+            raw->SetRenderSetting(TfToken("renderMode"),VtValue(std::string("pathtraced")));
+            next=capture("hdri-restored-pathtraced"); changed(previous,next,"HDRI restoration"); previous=std::move(next);
+            raw->SetRenderSetting(TfToken("renderMode"),VtValue(std::string("realtime")));
+            if(!realtimeReference.empty()) previous=realtimeReference;
+            raw->SetRenderSetting(TfToken("domeResolution"),VtValue(256));
+            rect.GetWidthAttr().Set(1.8f); rect.GetHeightAttr().Set(.3f);
+            next=capture("rect-dimensions"); changed(previous,next,"RectLight dimensions"); previous=std::move(next);
+            check(stat<int>(raw->GetRenderStats(),"environmentCubeResolution",0)==256,"Dome resolution edit was ignored");
+            rect.GetEnableColorTemperatureAttr().Set(true); rect.GetColorTemperatureAttr().Set(3000.f);
+            rect.GetNormalizeAttr().Set(true);
+            next=capture("temperature-normalize"); changed(previous,next,"color temperature and normalization"); previous=std::move(next);
+            dome.GetPrim().SetActive(false);
+            next=capture("hdri-deleted"); changed(previous,next,"DomeLight deletion");
+            check(stat<int>(raw->GetRenderStats(),"domeLights",-1)==0,"Deleted dome remains active");
         }
         if (options.selfTest) {
             check(bool(stage->GetPrimAtPath(SdfPath("/World/Cube"))), "Self-test requires samples/smoke.usda");

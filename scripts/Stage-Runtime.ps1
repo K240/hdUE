@@ -13,5 +13,6 @@ $Bin = Join-Path $Game 'Binaries\Win64'
 New-Item -ItemType Directory -Force -Path $Bin | Out-Null
 Copy-Item -LiteralPath (Join-Path $TaskRoot 'build\Release\hdue_backend_smoke.exe') -Destination $Bin
 Copy-Item -LiteralPath $Project -Destination (Join-Path $Game 'HdUEBackend.uproject')
+Copy-Item -LiteralPath (Join-Path $TaskRoot 'unreal\HdUEBackend\Shaders') -Destination $Game -Recurse -Force
 Write-Output "Runtime ready: $Runtime"
 

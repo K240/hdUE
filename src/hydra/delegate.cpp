@@ -15,6 +15,7 @@
 #include <chrono>
 #include <numeric>
 #include <limits>
+#include <algorithm>
 #if defined(HDUE_HOUDINI)
 #include "../houdini/diagnostics.h"
 #include <windows.h>
@@ -56,6 +57,7 @@ void submit(HdUEState& state) {
     std::vector<std::string> nativeMeshes, nativeMaterials;
     std::vector<HdueMaterialDesc> materials;
     std::vector<HdueLightDesc> lights;
+    std::vector<HdueLight> extendedLights;
     std::vector<const char*> removed;
     // Sync has joined before Execute. The lock also protects stats/settings access.
     std::lock_guard lock(state.mutex);
@@ -131,6 +133,40 @@ void submit(HdUEState& state) {
         else if (state.setting<bool>("sceneLightsEnabled", true)) ++sceneLights;
     }
     const bool autoLight = state.setting<bool>("autoViewerLight", false) && !sceneLights && !cameraLights && !state.nativeAssets.lights;
+    const auto extend=[&](const HdueLightDesc& legacy,const HdUELightData* source) {
+        HdueLight light{}; light.struct_size=sizeof(light); light.type=legacy.type; light.id=legacy.id;
+        light.visible=legacy.visible; light.intensity=legacy.intensity;
+        light.flags=source?source->flags:HDUE_LIGHT_SHADOWS|HDUE_LIGHT_MEGALIGHTS;
+        light.diffuse=source?source->diffuse:1; light.specular=source?source->specular:1;
+        light.cone_angle=source?source->coneAngle:180; light.cone_softness=source?source->coneSoftness:0;
+        light.angle_degrees=source?source->angle:.53f;
+        light.cube_resolution=uint32_t(state.setting<int>("domeResolution",512));
+        light.texture_format=source?source->textureFormat:HDUE_ENVIRONMENT_AUTOMATIC;
+        light.texture_file=source?source->texture.c_str():"";
+        for(int c=0;c<3;++c) {light.position_cm[c]=legacy.position[c]; light.color[c]=legacy.color[c];}
+        for(int axis=0;axis<3;++axis) {
+            GfVec3d direction(0); direction[axis]=1;
+            direction=source?state.convert(source->transform.TransformDir(direction),true).GetNormalized():direction;
+            for(int c=0;c<3;++c) light.axes[axis*3+c]=direction[c];
+        }
+        light.width_cm=legacy.width_cm; light.height_cm=legacy.height_cm;
+        const double units=state.setting<double>("metersPerUnit",.01)*100;
+        if(source) {
+            light.length_cm=float(source->length*source->transform.TransformDir(GfVec3d(1,0,0)).GetLength()*units);
+            if(source->type==HDUE_CYLINDER_LIGHT || source->type==HDUE_SPHERE_LIGHT) {
+                const double x=source->transform.TransformDir(GfVec3d(1,0,0)).GetLength();
+                const double y=source->transform.TransformDir(GfVec3d(0,1,0)).GetLength();
+                const double z=source->transform.TransformDir(GfVec3d(0,0,1)).GetLength();
+                light.width_cm=float(source->width*(source->type==HDUE_CYLINDER_LIGHT?std::max(y,z):std::max({x,y,z}))*units);
+                if(light.width_cm==0 && source->type==HDUE_SPHERE_LIGHT) light.flags|=HDUE_LIGHT_POINT;
+            }
+        }
+        if(legacy.type==HDUE_CAMERA_DISTANT_LIGHT) {
+            for(int i=0;i<9;++i) light.axes[i]=(i%4)==0?1.:0.;
+            for(int c=0;c<3;++c) light.axes[c]=legacy.direction[c];
+        }
+        extendedLights.push_back(light);
+    };
     for (const auto& id : state.dirtyLights) {
         const auto& data = state.lights.at(id);
         HdueLightDesc desc{}; desc.id = data.id.c_str(); desc.type = data.type;
@@ -148,6 +184,7 @@ void submit(HdUEState& state) {
         desc.width_cm = float(data.width * widthScale * state.setting<double>("metersPerUnit", 0.01) * 100);
         desc.height_cm = float(data.height * heightScale * state.setting<double>("metersPerUnit", 0.01) * 100);
         lights.push_back(desc);
+        extend(desc,&data);
         if (TfGetenvBool("HDUE_TRACE_SCENE", false)) TF_STATUS("hdUE light %s intensity=%g rgb=(%g,%g,%g)", desc.id, desc.intensity, desc.color[0], desc.color[1], desc.color[2]);
     }
     for (const auto& id : state.removed) removed.push_back(id.c_str());
@@ -159,6 +196,7 @@ void submit(HdUEState& state) {
             desc.intensity = float(viewerIntensity * (i ? 0.1875 : 1.0));
             desc.direction[0] = 1; desc.direction[1] = i ? -0.6 : 0.4; desc.direction[2] = i ? -0.2 : -0.5;
             lights.push_back(desc);
+            extend(desc,nullptr);
         }
     } else if (state.autoLightActive) {
         removed.push_back(AutoKey); removed.push_back(AutoFill);
@@ -167,9 +205,17 @@ void submit(HdUEState& state) {
     batch.struct_size = sizeof(batch); batch.reset_scene = state.firstBatch;
     batch.meshes = meshes.data(); batch.mesh_count = uint32_t(meshes.size());
     batch.materials = materials.data(); batch.material_count = uint32_t(materials.size());
-    batch.lights = lights.data(); batch.light_count = uint32_t(lights.size());
+    const auto& lightingApi=state.backend->lighting_api();
+    if(!lightingApi.upsert) for(const auto& light:extendedLights)
+        if(light.type>HDUE_CAMERA_DISTANT_LIGHT || (light.texture_file && *light.texture_file))
+            throw std::runtime_error("This scene requires the backend lighting extension; build/cook/stage a current runtime.");
+    batch.lights = lightingApi.upsert?nullptr:lights.data(); batch.light_count = lightingApi.upsert?0:uint32_t(lights.size());
     batch.removed_ids = removed.data(); batch.removed_count = uint32_t(removed.size());
     state.backend->require(state.backend->api().apply_scene(state.session, &batch), "apply_scene");
+    if(lightingApi.upsert && !extendedLights.empty()) {
+        HdueLightBatch update{sizeof(HdueLightBatch),uint32_t(extendedLights.size()),extendedLights.data()};
+        state.backend->require(lightingApi.upsert(state.session,&update),"upsert_lights");
+    }
     const auto& assetApi=state.backend->asset_api();
     if (!sceneAssets.empty() && !assetApi.upsert) throw std::runtime_error("Backend has no native scene asset extension");
     if (assetApi.remove) {
@@ -335,7 +381,7 @@ public:
                 converged_ = false;
             } else if (needsRequest) {
                 HdueRenderRequest request{};
-                request.struct_size = sizeof(request); request.generation = ++s.generation;
+                request.struct_size = sizeof(request); request.generation = s.generation+1;
                 request.mode = s.setting<std::string>("renderMode", "realtime") == "pathtraced" ? HDUE_PATH_TRACED : HDUE_REALTIME;
                 request.samples_per_pixel = uint32_t(std::max(1, s.setting<int>("samplesPerPixel", 64)));
                 request.warmup_frames = uint32_t(std::max(1, s.setting<int>("warmupFrames", 16)));
@@ -357,7 +403,13 @@ public:
                     pass->GetCamera()->GetHorizontalApertureOffset() != 0 || pass->GetCamera()->GetVerticalApertureOffset() != 0))
                     throw std::runtime_error("This initial hdUE supports centered perspective cameras");
                 const auto requestStart = std::chrono::steady_clock::now();
-                s.backend->require(s.backend->api().request_render(s.session, &request), "request_render");
+                const auto requested=s.backend->api().request_render(s.session, &request);
+                if(requested==HDUE_PENDING) {
+                    s.assetRequestPending=true; converged_=false; s.lastFrame={};
+                    buffer->invalidate(); if(depth) depth->invalidate(); s.error.clear(); return;
+                }
+                s.backend->require(requested, "request_render");
+                s.generation=request.generation;
                 s.requestCpuMsTotal += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - requestStart).count();
                 view_ = view; projection_ = projection; settingsVersion_ = settingsVersion;
                 s.submittedRequestSettingsRevision=settingsVersion;
@@ -406,7 +458,8 @@ HdUERenderDelegate::~HdUERenderDelegate() {
 }
 const TfTokenVector& HdUERenderDelegate::GetSupportedRprimTypes() const { static TfTokenVector t{HdPrimTypeTokens->mesh}; return t; }
 const TfTokenVector& HdUERenderDelegate::GetSupportedSprimTypes() const { static TfTokenVector t{HdPrimTypeTokens->camera, HdPrimTypeTokens->material,
-    HdPrimTypeTokens->distantLight, HdPrimTypeTokens->sphereLight, HdPrimTypeTokens->rectLight}; return t; }
+    HdPrimTypeTokens->distantLight, HdPrimTypeTokens->sphereLight, HdPrimTypeTokens->rectLight,
+    HdPrimTypeTokens->domeLight,HdPrimTypeTokens->diskLight,HdPrimTypeTokens->cylinderLight}; return t; }
 const TfTokenVector& HdUERenderDelegate::GetSupportedBprimTypes() const { static TfTokenVector t{HdPrimTypeTokens->renderBuffer}; return t; }
 HdRenderPassSharedPtr HdUERenderDelegate::CreateRenderPass(HdRenderIndex* index, const HdRprimCollection& collection) { return std::make_shared<Pass>(index, collection, state_); }
 HdInstancer* HdUERenderDelegate::CreateInstancer(HdSceneDelegate*, const SdfPath&) { TF_RUNTIME_ERROR("Instancing is not implemented in the initial hdUE delegate"); return nullptr; }
@@ -419,6 +472,9 @@ HdSprim* HdUERenderDelegate::CreateSprim(const TfToken& type, const SdfPath& id)
     if (type == HdPrimTypeTokens->distantLight) return HdUECreateLight(id, HDUE_DISTANT_LIGHT);
     if (type == HdPrimTypeTokens->sphereLight) return HdUECreateLight(id, HDUE_SPHERE_LIGHT);
     if (type == HdPrimTypeTokens->rectLight) return HdUECreateLight(id, HDUE_RECT_LIGHT);
+    if (type == HdPrimTypeTokens->domeLight) return HdUECreateLight(id,HDUE_DOME_LIGHT);
+    if (type == HdPrimTypeTokens->diskLight) return HdUECreateLight(id,HDUE_DISK_LIGHT);
+    if (type == HdPrimTypeTokens->cylinderLight) return HdUECreateLight(id,HDUE_CYLINDER_LIGHT);
     return nullptr;
 }
 HdSprim* HdUERenderDelegate::CreateFallbackSprim(const TfToken& type) { return CreateSprim(type, SdfPath::EmptyPath()); }
@@ -439,7 +495,8 @@ HdRenderSettingDescriptorList HdUERenderDelegate::GetRenderSettingDescriptors() 
     {"Render mode", TfToken("renderMode"), VtValue(std::string("realtime"))},
     {"Samples per pixel", TfToken("samplesPerPixel"), VtValue(64)},
     {"Warmup frames", TfToken("warmupFrames"), VtValue(16)}, {"Lumen", TfToken("lumenEnabled"), VtValue(true)},
-    {"Viewer light intensity", TfToken("viewerLightIntensity"), VtValue(4.f)} }; }
+    {"Viewer light intensity", TfToken("viewerLightIntensity"), VtValue(4.f)},
+    {"Environment cube resolution",TfToken("domeResolution"),VtValue(512)} }; }
 void HdUERenderDelegate::SetRenderSetting(const TfToken& key, const VtValue& value) {
     if(key.GetString().starts_with("hdUE:")) { SetRenderSetting(TfToken(key.GetString().substr(5)),value); return; }
     if (key==TfToken("stageMetersPerUnit")) {
@@ -471,7 +528,7 @@ void HdUERenderDelegate::SetRenderSetting(const TfToken& key, const VtValue& val
         for (const auto& [id, light] : state_->lights) if (light.viewer) state_->dirtyLights.insert(id);
         ++state_->revision;
     }
-    if (key == TfToken("sceneLightsEnabled")) {
+    if (key == TfToken("sceneLightsEnabled") || key==TfToken("domeResolution")) {
         for (const auto& [id, light] : state_->lights) if (!light.viewer) state_->dirtyLights.insert(id);
         ++state_->revision;
     }
@@ -500,6 +557,9 @@ VtDictionary HdUERenderDelegate::GetRenderStats() const {
     int translucentMaterials = 0;
     for (const auto& [id, material] : state_->materials) if (material.opacity < 1.f && asset(*state_, "nativeMaterialAssets", id).empty()) ++translucentMaterials;
     int sceneLights = int(state_->nativeAssets.lights);
+    HdueLightingStatus lighting{}; lighting.struct_size=sizeof(lighting);
+    const auto& lightingApi=state_->backend->lighting_api();
+    if(lightingApi.get_status && state_->session) state_->backend->require(lightingApi.get_status(state_->session,&lighting),"lighting_status");
     if (state_->setting<bool>("sceneLightsEnabled", true))
         for (const auto& [id, light] : state_->lights) if (!light.viewer && active(light)) ++sceneLights;
     return { {"error", VtValue(residency.phase == HDUE_RESIDENCY_FAILED ? std::string(residency.message) : state_->error)}, {"generation", VtValue(state_->generation)},
@@ -510,6 +570,10 @@ VtDictionary HdUERenderDelegate::GetRenderStats() const {
         {"vtPreparationFrames", VtValue(int(residency.preparation_frames))}, {"vtPreparationMs", VtValue(residency.preparation_ms)},
         {"materialGraphBlocked", VtValue(!state_->setting<bool>("materialGraphValid", true))},
         {"translucentMaterials", VtValue(translucentMaterials)},
+        {"megaLightsProject",VtValue(bool(lighting.mega_lights_project))}, {"megaLightsAllowed",VtValue(bool(lighting.mega_lights_allowed))},
+        {"megaLightsActive",VtValue(bool(lighting.mega_lights_active))}, {"domeLights",VtValue(int(lighting.dome_count))},
+        {"environmentPending",VtValue(bool(lighting.environment_pending))}, {"environmentCubeResolution",VtValue(int(lighting.cube_resolution))},
+        {"environmentMaxRadiance",VtValue(lighting.environment_max_radiance)},
         {"nativeAssetInstances", VtValue(int(state_->nativeAssets.instances))},
         {"nativeAssetIds", VtValue(nativeAssetIds)},
         {"nativeAssetLoading", VtValue(int(state_->nativeAssets.loading))},

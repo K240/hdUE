@@ -1,4 +1,5 @@
 #include "Scene.h"
+#include "Lighting.h"
 #include "Components/DynamicMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/DirectionalLightComponent.h"
@@ -16,7 +17,7 @@
 #include "MaterialShared.h"
 #include "RHI.h"
 
-FHdueScene::FHdueScene(UWorld* InWorld) : Assets(InWorld), World(InWorld) {}
+FHdueScene::FHdueScene(UWorld* InWorld) : Assets(InWorld), Lighting(MakeUnique<FHdueLighting>(InWorld)), World(InWorld) {}
 FHdueScene::~FHdueScene() {
     for (auto& Entry : Actors) if (IsValid(Entry.Value)) World->DestroyActor(Entry.Value);
 }
@@ -64,6 +65,7 @@ TArray<TStrongObjectPtr<UTexture2D>> FHdueScene::GatherVirtualTextures() const {
     return Result;
 }
 void FHdueScene::Remove(const FString& Id) {
+    Lighting->Remove(Id);
     CameraLightDirections.Remove(Id);
     if (AActor** Actor = Actors.Find(Id)) {
         if (IsValid(*Actor)) World->DestroyActor(*Actor);
@@ -97,6 +99,7 @@ bool FHdueScene::Apply(const HdueSceneBatch& Batch, FString& Error) {
         }
     }
     if (Batch.reset_scene) {
+        Lighting->Clear();
         Assets.Reset();
         for (const auto& Entry : Actors) if (IsValid(Entry.Value)) World->DestroyActor(Entry.Value);
         // Preserve the native host's bootstrap map until an explicit reset.
@@ -233,6 +236,7 @@ bool FHdueScene::Apply(const HdueSceneBatch& Batch, FString& Error) {
     return true;
 }
 void FHdueScene::UpdateCameraLights(const FVector& Eye, const FVector& Target, const FVector& Up) {
+    Lighting->UpdateCamera(Eye,Target,Up);
     const FVector Forward = (Target - Eye).GetSafeNormal();
     const FVector Right = FVector::CrossProduct(Up, Forward).GetSafeNormal();
     const FVector CameraUp = FVector::CrossProduct(Forward, Right).GetSafeNormal();

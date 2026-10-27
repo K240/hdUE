@@ -7,8 +7,11 @@
 #include "pxr/imaging/hd/tokens.h"
 #include "pxr/imaging/glf/simpleLight.h"
 #include "pxr/usd/sdf/assetPath.h"
+#include "pxr/usd/usdLux/blackbody.h"
 #include <cmath>
 #include <algorithm>
+#include "geom_subsets.h"
+#include "mesh_normals.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 namespace {
@@ -45,6 +48,7 @@ template<class T> std::vector<T> expanded(HdSceneDelegate* delegate, const SdfPa
     return out;
 }
 class Mesh final : public HdMesh {
+    std::set<std::string> emitted_;
 public:
     explicit Mesh(const SdfPath& id) : HdMesh(id) {}
     HdDirtyBits GetInitialDirtyBitsMask() const override { return HdChangeTracker::AllDirty; }
@@ -73,19 +77,14 @@ public:
         }
         mesh.normals = expanded<GfVec3f>(delegate, GetId(), HdTokens->normals, triangles, parameters, util, HdTypeFloatVec3);
         if (mesh.normals.size() != mesh.points.size()) mesh.normals.resize(mesh.points.size(), GfVec3f(0));
-        for (size_t i = 0; i + 2 < mesh.points.size(); i += 3) {
-            const auto normal = GfCross(mesh.points[i + 1] - mesh.points[i], mesh.points[i + 2] - mesh.points[i]).GetNormalized();
-            for (size_t corner = 0; corner < 3; ++corner) {
-                if (mesh.normals[i + corner].GetLengthSq() < 1e-12f) mesh.normals[i + corner] = normal;
-            }
+        if (std::any_of(mesh.normals.begin(),mesh.normals.end(),[](const auto& normal) {return normal.GetLengthSq()<1e-12f;})) {
+            try {
+                const auto smooth=HdUEComputeSmoothNormals(points,triangles);
+                for (size_t i=0;i<mesh.normals.size();++i)
+                    if (mesh.normals[i].GetLengthSq()<1e-12f) mesh.normals[i]=smooth[i];
+            } catch (const std::invalid_argument& error) { TF_RUNTIME_ERROR("%s at %s",error.what(),GetId().GetText()); return; }
         }
         mesh.uv = expanded<GfVec2f>(delegate, GetId(), TfToken("st"), triangles, parameters, util, HdTypeFloatVec2);
-        if (!(*bits & (HdChangeTracker::DirtyPoints | HdChangeTracker::DirtyTopology))) {
-            std::lock_guard lock(state->mutex);
-            const auto old = state->meshes.find(mesh.id);
-            if (old != state->meshes.end() && old->second.points == mesh.points) mesh.pickMesh = old->second.pickMesh;
-        }
-        if (!mesh.pickMesh) mesh.pickMesh = std::make_shared<HdUEPickMesh>(mesh.points);
         std::lock_guard lock(state->mutex);
         if (mesh.material.empty() && mesh.sceneAsset.empty()) {
             HdUEMaterialData material;
@@ -107,20 +106,34 @@ public:
                 state->dirtyMaterials.insert(material.id);
             }
         }
-        const auto previous = state->meshes.find(mesh.id);
-        const bool onlyNativeBounds = previous != state->meshes.end() && !mesh.sceneAsset.empty() &&
-            previous->second.sceneAsset==mesh.sceneAsset && previous->second.transform==mesh.transform && previous->second.visible==mesh.visible;
-        const bool meshChanged = !onlyNativeBounds && (previous == state->meshes.end() || previous->second.points != mesh.points ||
-            previous->second.normals != mesh.normals || previous->second.uv != mesh.uv || previous->second.transform != mesh.transform ||
-            previous->second.material != mesh.material || previous->second.visible != mesh.visible || previous->second.sceneAsset != mesh.sceneAsset);
-        state->meshes[mesh.id] = std::move(mesh);
-        if (meshChanged) state->dirtyMeshes.insert(GetId().GetString());
-        if (!onlyNativeBounds) ++state->revision;
+        std::vector<HdUEMeshData> parts;
+        try { parts = HdUEPartitionSubsets(std::move(mesh), topology, parameters); }
+        catch (const std::invalid_argument& error) { TF_RUNTIME_ERROR("%s at %s", error.what(), GetId().GetText()); return; }
+        std::set<std::string> current;
+        for (auto& part : parts) {
+            const auto previous = state->meshes.find(part.id);
+            if (previous != state->meshes.end() && previous->second.points == part.points) part.pickMesh = previous->second.pickMesh;
+            if (!part.pickMesh) part.pickMesh = std::make_shared<HdUEPickMesh>(part.points);
+            const bool onlyNativeBounds = previous != state->meshes.end() && !part.sceneAsset.empty() &&
+                previous->second.sceneAsset==part.sceneAsset && previous->second.transform==part.transform && previous->second.visible==part.visible;
+            const bool meshChanged = !onlyNativeBounds && (previous == state->meshes.end() || previous->second.points != part.points ||
+                previous->second.normals != part.normals || previous->second.uv != part.uv || previous->second.transform != part.transform ||
+                previous->second.material != part.material || previous->second.visible != part.visible || previous->second.sceneAsset != part.sceneAsset);
+            const auto id = part.id;
+            state->meshes[id] = std::move(part);
+            state->removed.erase(id);
+            if (meshChanged) { state->dirtyMeshes.insert(id); ++state->revision; }
+            current.insert(id);
+        }
+        for (const auto& id : emitted_) if (!current.count(id)) {
+            state->meshes.erase(id); state->dirtyMeshes.erase(id); state->removed.insert(id); ++state->revision;
+        }
+        emitted_ = std::move(current);
         *bits = HdChangeTracker::Clean;
     }
     void Finalize(HdRenderParam* param) override {
         auto* state = static_cast<HdUEState*>(param);
-        state->erase(GetId().GetString());
+        for (const auto& id : emitted_) state->erase(id);
         state->erase(GetId().GetString() + ".displayColor");
     }
 protected:
@@ -176,6 +189,26 @@ public:
         data.viewer = applicationLight.IsHolding<GlfSimpleLight>() && !applicationLight.UncheckedGet<GlfSimpleLight>().IsDomeLight();
         data.color = value(get("color"), data.color);
         data.intensity = value(get("intensity"), 1.f) * std::exp2(value(get("exposure"), 0.f));
+        if(value(get("enableColorTemperature"),false)) {
+            const auto temperature=UsdLuxBlackbodyTemperatureAsRgb(value(get("colorTemperature"),6500.f));
+            for(int c=0;c<3;++c) data.color[c]*=temperature[c];
+        }
+        if(value(get("normalize"),false)) data.flags|=HDUE_LIGHT_NORMALIZE;
+        if(!value(get("shadow:enable"),true)) data.flags&=~HDUE_LIGHT_SHADOWS;
+        if(value(get("treatAsPoint"),false)) data.flags|=HDUE_LIGHT_POINT;
+        if(!value(get("hdue:visibleBackground"),true)) data.flags&=~HDUE_LIGHT_BACKGROUND;
+        data.diffuse=value(get("diffuse"),1.f); data.specular=value(get("specular"),1.f);
+        data.angle=value(get("angle"),.53f);
+        data.coneAngle=value(get("shaping:cone:angle"),180.f); data.coneSoftness=value(get("shaping:cone:softness"),0.f);
+        auto texture=get("texture:file");
+        if(applicationLight.IsHolding<GlfSimpleLight>() && applicationLight.UncheckedGet<GlfSimpleLight>().IsDomeLight())
+            texture=VtValue(applicationLight.UncheckedGet<GlfSimpleLight>().GetDomeLightTextureFile());
+        if(texture.IsHolding<SdfAssetPath>()) {
+            const auto& file=texture.UncheckedGet<SdfAssetPath>();
+            data.texture=file.GetResolvedPath().empty()?file.GetAssetPath():file.GetResolvedPath();
+        }
+        const auto format=value(get("texture:format"),TfToken("automatic"));
+        data.textureFormat=format==TfToken("automatic")?HDUE_ENVIRONMENT_AUTOMATIC:format==TfToken("latlong")?HDUE_ENVIRONMENT_LATLONG:99;
         if (data.viewer) {
             // Hdx uses 15000 for its camera light when the renderer is not
             // Storm. Treat this application light separately from USD lights.
@@ -185,11 +218,19 @@ public:
             data.transform = GfMatrix4d(1);
             data.type = HDUE_CAMERA_DISTANT_LIGHT;
         }
-        data.width = value(get(type_ == HDUE_SPHERE_LIGHT ? "radius" : "width"), 1.f);
-        data.height = value(get("height"), 1.f);
+        const bool radial=type_==HDUE_SPHERE_LIGHT || type_==HDUE_DISK_LIGHT || type_==HDUE_CYLINDER_LIGHT;
+        data.width=value(get(radial?"radius":"width"),radial?.5f:1.f);
+        data.height=type_==HDUE_DISK_LIGHT?data.width:value(get("height"),1.f);
+        data.length=value(get("length"),1.f);
         auto* state = static_cast<HdUEState*>(param);
         std::lock_guard lock(state->mutex);
         const auto old = state->lights.find(data.id);
+        if(old!=state->lights.end() && old->second.transform==data.transform && old->second.texture==data.texture &&
+            old->second.color==data.color && old->second.intensity==data.intensity && old->second.visible==data.visible &&
+            old->second.type==data.type && old->second.width==data.width && old->second.height==data.height && old->second.length==data.length &&
+            old->second.flags==data.flags && old->second.diffuse==data.diffuse && old->second.specular==data.specular &&
+            old->second.angle==data.angle && old->second.coneAngle==data.coneAngle && old->second.coneSoftness==data.coneSoftness &&
+            old->second.textureFormat==data.textureFormat) {*bits=Clean; return;}
         if (data.viewer && old != state->lights.end() && old->second.viewer && old->second.color == data.color && old->second.visible == data.visible) {
             // The backend follows the render camera at request time. Moving
             // Hdx's camera light must not submit/cancel the entire scene.

@@ -9,6 +9,7 @@ class AActor;
 class UMaterialInterface;
 class UTexture2D;
 struct FNativePickGeometry;
+class FHdueLighting;
 
 class FHdueScene {
 public:
@@ -22,6 +23,7 @@ public:
     bool HasRefractiveMaterials() const;
     HdueResult PickNative(const HdueNativeRay& Ray, HdueNativeHit& Hit, FString& ObjectId, FString& Error);
     FHdueNativeAssets Assets;
+    TUniquePtr<FHdueLighting> Lighting;
 private:
     UWorld* World;
     TMap<FString, AActor*> Actors;

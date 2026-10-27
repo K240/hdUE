@@ -16,6 +16,13 @@ Backend::Backend(const std::filesystem::path& dll) {
         throw std::runtime_error("Backend has no compatible, complete hdUE C ABI");
     }
     // Never FreeLibrary: UE globals/TLS and rendering callbacks have process lifetime.
+    const auto lighting=reinterpret_cast<HdueGetLightingApiFn>(GetProcAddress(static_cast<HMODULE>(module_),"hdue_get_lighting_api"));
+    if(lighting) {
+        HdueLightingApi candidate{};
+        if(lighting(HDUE_LIGHTING_ABI_VERSION,sizeof(candidate),&candidate)==HDUE_OK &&
+            candidate.struct_size==sizeof(candidate) && candidate.abi_version==HDUE_LIGHTING_ABI_VERSION &&
+            candidate.upsert && candidate.get_status) lightingApi_=candidate;
+    }
     const auto depth=reinterpret_cast<HdueGetDepthApiFn>(GetProcAddress(static_cast<HMODULE>(module_),"hdue_get_depth_api"));
     if(depth) {
         HdueDepthApi candidate{};

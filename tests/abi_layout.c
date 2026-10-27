@@ -4,7 +4,14 @@
 #include "hdue/asset_api.h"
 #include "hdue/viewport_api.h"
 #include "hdue/depth_api.h"
+#include "hdue/lighting_api.h"
+_Static_assert(sizeof(HdueLight) == 184, "extended light layout");
+_Static_assert(sizeof(HdueLightBatch) == 16, "light batch layout");
+_Static_assert(sizeof(HdueLightingStatus) == 56, "lighting status layout");
+_Static_assert(sizeof(HdueLightingApi) == 24, "lighting API layout");
 #include <stddef.h>
+_Static_assert(sizeof(HdueViewportMaterial) == 32, "viewport material binding layout");
+_Static_assert(sizeof(HdueViewportMaterials) == 32, "viewport materials layout");
 
 _Static_assert(sizeof(HdueSession) == 8, "64-bit session handles");
 _Static_assert(offsetof(HdueInitDesc, instance_handle) == 8, "C ABI alignment");

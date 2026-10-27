@@ -10,7 +10,7 @@ Each rendering run must create fresh images, metrics, logs, and `verified.json` 
 
 ## C/C++ contracts
 
-Each SDK build has three native tests covering ABI layout, render-buffer snapshots, and picking. These have passed for both builds.
+Each SDK build has four native tests covering ABI layout, render-buffer snapshots, picking, and GeomSubset partitioning. These have passed for both builds.
 
 ```powershell
 ctest --test-dir build -C Release --output-on-failure
@@ -19,11 +19,19 @@ ctest --test-dir build/houdini-22.0.466 -C Release --output-on-failure
 
 Coverage includes structure sizes, immutable AOV publication, repeated Map/Unmap, pointer lifetime, concurrent publication, reallocation rejection while mapped, finalization, row orientation, scalar depth, convergence, picking bounds, clipping, backfaces, transformed geometry, negative/nonuniform scales, and BVH traversal.
 
+`tests/geom_subsets.cpp` checks quad-to-triangle ownership, UV/normal preservation, unassigned faces, subset removal, invalid/overlapping faces, native mesh slot preservation, area-weighted normals, shared boundary normals, and degenerate geometry. The viewport material descriptor also has fixed C layout assertions.
+
 ## Native rendering and Hydra
 
 `Test-Backend.ps1` validates a real UE runtime in a hidden Win32 host: World/RHI readiness, readback, 64 Path Tracer samples, camera and resolution changes, repeated sessions, invalid calls, and shutdown.
 
 `Test-Hydra.ps1 -SelfTest` validates the synthetic scene through the delegate: transforms, vertices, topology, materials, lights, visibility, deletion, time, native fixtures, Lumen toggling, and delegate re-creation.
+
+`Test-Hydra.ps1 -InputUsd samples/lighting/lighting.usda -LightingTest -Mode both` exercises the owned HDR environment and 30-light fixture. Two delegate cycles produced 20 finite HDR images, including environment exposure, rotation, tint, visibility, restoration, deletion, rect dimensions, temperature, and normalization changes. Render-thread diagnostics confirmed active MegaLights for real-time frames and its absence in Path Tracer. All Path Tracer captures reached 64 samples after environment preparation. The native and generic Hydra smoke regression also passed, with normalized HDR RGB RMSE of 0.0849% for this run.
+
+The lighting extension has fixed C layout assertions and rejects invalid descriptors. The Solaris `lighting` test kind verifies real compositor output, HDR range, readiness, Y-up/meters, thread/session/size rejection, environment edits, and 64-sample Path Tracer recovery. `tests/houdini_embedded_materials.py` also extracts a repository-owned HDRI from a temporary HDA and resolves a composed DomeLight without editing the source.
+
+The Solaris lighting run produced five converged renderer states and two compositor captures, then shut UE down normally. A separate native MaterialX/GeomSubset regression also passed with the updated runtime. An EXR converted from the owned RGBE fixture retained identical decoded source pixels and rendered in both modes. Its 64-sample environment-only background comparison was below 1% relative RMSE; geometry includes independent Monte Carlo noise and is not asserted pixel-identical between the two runs.
 
 `Verify.ps1` combines these checks with native-versus-Hydra HDR comparison. The historical synthetic comparison achieved normalized RGB RMSE of 0.0778%, below the 1% threshold. This is a fixture-specific result, not a general equivalence guarantee.
 
@@ -67,7 +75,13 @@ This validates base color rather than arbitrary graphs, dynamic normal maps, COP
 
 ## MaterialX and virtual textures
 
-Owned fixtures cover Standard Surface, OpenPBR, metal, coat, anisotropy, transmission, subsurface, textures, and inline USD graphs. Full native validation uses usdview's registry integration and prepared/cooked Substrate assets.
+Owned fixtures cover Standard Surface, OpenPBR, metal, coat, anisotropy, transmission, subsurface, textures, and inline USD graphs. Full native validation uses the cooked Substrate registry in usdview and Solaris.
+
+`tests/houdini_embedded_materials.py` creates its own temporary HDA and embedded image. It checks byte-preserving extraction, immutable updates, resolver-independent signatures, reference rebasing, different internal/composed paths, session recreation, binding removal, instance expansion, and unchanged sources. No vendor asset is included in this test.
+
+The optional Solaris `materials` test kind consumes a caller-selected USD and cooked library. It checks native material/texture statistics, Lumen and 64-sample Path Tracer images, real compositor captures, ABI/thread/session validation, subset rebinding/removal/restoration, and normal engine shutdown. Input assets and evidence remain local and ignored.
+
+These checks establish binding and converged finite images; they do not assert pixel-identical subsurface scattering between Lumen and Path Tracer.
 
 `Test-MaterialX.ps1` checks public parameter edits, material changes, image comparisons, invalid updates, source preservation, renderer re-creation, and shutdown. Graph validation rejects cycles, unknown nodes, incompatible connections/types, missing images, nonfinite values, and unsupported volume/displacement outputs.
 
@@ -79,7 +93,7 @@ Synthetic normal/UDIM tests cover raw normals, strength, texture replacement, ti
 
 `scripts/generate_solaris_materialx_sample.py` creates `samples/materialx/showcase_solaris.usda`. It normalizes the scene, moves all roots below one default prim, repairs relationships/connections, and preserves relative asset paths.
 
-The generator verifies 21 mesh bindings and twelve materials after reference composition. Native Solaris captures confirmed colored Preview Surface fallbacks in Lumen and 64-sample Path Tracer mode. This corrects encapsulation; it does not add full MaterialX registry support to Solaris.
+The generator verifies 21 mesh bindings and twelve materials after reference composition. Native Solaris captures confirmed colored Preview Surface fallbacks in Lumen and 64-sample Path Tracer mode. The generator repairs reference encapsulation; full native MaterialX rendering uses the separately prepared/cooked registry described above.
 
 ## Publication checks
 

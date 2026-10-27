@@ -4,7 +4,7 @@
   "DisableEnginePluginsByDefault": true,
   "Description": "In-process Unreal backend for the hdUE Hydra delegate",
   "Modules": [
-    { "Name": "HdUEBackend", "Type": "Runtime", "LoadingPhase": "Default" },
+    { "Name": "HdUEBackend", "Type": "Runtime", "LoadingPhase": "PostConfigInit" },
     { "Name": "HdUEContent", "Type": "Editor", "LoadingPhase": "Default" }
   ],
   "Plugins": [
