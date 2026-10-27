@@ -24,7 +24,8 @@ Unreal Engine is governed by the [Unreal Engine End User License Agreement](http
 | MaterialX | Material graph export and conversion utilities | [Apache License 2.0](https://github.com/AcademySoftwareFoundation/MaterialX/blob/main/LICENSE) and accompanying upstream notices |
 | PySide6 / Qt | Optional usdview user interface | [Qt licensing](https://www.qt.io/licensing): LGPLv3/GPLv3 community or commercial terms, as applicable; also see [Qt for Python component notices](https://doc.qt.io/qtforpython/licenses.html) |
 | PyOpenGL | Optional usdview OpenGL integration | [Upstream license collection](https://github.com/mcfletch/pyopengl/blob/master/license.txt), including BSD-style licenses; retain the collection supplied with the installed release |
-| NumPy | Optional usdview numerical utilities | [BSD 3-Clause license](https://github.com/numpy/numpy/blob/main/LICENSE.txt) and additional notices supplied with the selected binary package |
+| NumPy | usdview numerical utilities and HDR image comparison/preview scripts | [BSD 3-Clause license](https://github.com/numpy/numpy/blob/main/LICENSE.txt) and additional notices supplied with the selected binary package |
+| Pillow | Optional HDR-to-PNG image preview script | [Pillow/PIL license](https://github.com/python-pillow/Pillow/blob/main/LICENSE) and additional notices supplied with the selected binary package |
 | Python | Utility scripts and host integration | [Python Software Foundation License Version 2 and incorporated-software notices](https://docs.python.org/3/license.html), as supplied with the selected runtime |
 
 SDK-provided packages can differ from standalone dependencies. The license files and notices supplied with each installed package apply. Build tools and platform SDKs also retain their respective terms.

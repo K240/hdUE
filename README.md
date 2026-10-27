@@ -32,8 +32,9 @@ Hydra changes are batched and applied on the UE owner thread. Rendering and read
 ## Requirements
 
 - Unreal Engine **5.8.4** source: tag `5.8.4-release`, commit `f45729c0b6f097038e72b52d366a62baeca3275b`.
-- Windows x64, MSVC, DirectX 12, and hardware ray tracing.
-- OpenUSD **26.03** for the standalone host and usdview.
+- Windows x64, Visual Studio 2022 C++ tools, a Windows SDK, DirectX 12, and hardware ray tracing. The CMake scripts use the `Visual Studio 17 2022` generator.
+- PowerShell 7, Git, and CMake **3.24 or newer**, with Git and CMake available on `PATH`.
+- OpenUSD **26.03** C++ SDK with Hydra/usdImaging, usdview, and Python **3.11** bindings for the standalone host and usdview.
 - Houdini **22.0.466**, with its bundled USD **26.05** and Python **3.13**, for Solaris.
 - `uv` for all Python execution and dependency management.
 
@@ -61,7 +62,9 @@ Run commands from the repository root. Store installation locations in the ignor
 | `runtime_config` | `HDUE_RUNTIME_CONFIG` | `-RuntimeConfig` |
 | `review_scene` | `HDUE_REVIEW_SCENE` | `-InputUsd` |
 
-Explicit parameters take priority over environment variables and local configuration. `HDUE_LOCAL_CONFIG` selects an alternative local configuration file. Relative values are resolved against that file's directory.
+For scripts using the local-path resolver, explicit parameters take priority over environment variables and local configuration. `HDUE_LOCAL_CONFIG` selects an alternative local configuration file. Relative values stored in that file are resolved against its directory; relative explicit parameters and environment values use the current working directory.
+
+`runtime_config` is read by `Launch-Houdini.ps1` and `Update-HoudiniRuntime.ps1`. Pass `-RuntimeConfig` explicitly to `Launch-Usdview.ps1`; it otherwise uses the repository's staged runtime. `review_scene` supplies the input for `Test-Opacity.ps1` and `Test-Glass.ps1`; scene launchers use their own `-InputUsd` parameter.
 
 Keep private projects, scene-specific helpers, catalogs, runtime profiles, and review evidence in `.local/`, `external/`, or `out/`. These directories are ignored. The source under `unreal/HdUEBackend` remains version controlled; its generated Content and build products do not.
 
@@ -97,6 +100,8 @@ Fresh verification evidence is written under `out/`. A successful exit code alon
 
 The launcher owns UE initialization, Tick, and shutdown on the UI thread. Use it rather than an unmanaged usdview process. Asynchronous scene processing is unsupported.
 
+Generic Hydra translation supports meshes, cameras, materials, and distant, sphere, and rect lights. Hydra instancing, curves, points, and volumes are not implemented.
+
 Camera controls include orbit, pan, and dolly. Continuous updates are coalesced. Lumen retains its ViewState during camera motion; scene, material, time, resolution, and Path Tracer request changes reset accumulation.
 
 The launcher supplies its own CPU picking path for generic meshes and supported native geometry. This is separate from standard Hydra ID AOVs and selection outlines. Native CPU picking requires readable, resident LOD0 data and rejects unsupported material deformation or Nanite overrides.
@@ -127,7 +132,7 @@ New-Item -ItemType Directory -Force .local | Out-Null
 .\scripts\Test-Houdini.ps1
 ```
 
-The update script places the current depth-capable DLL under a content-hash filename. `-SetDefault` records an ignored default profile. An explicit launch profile takes priority. Restart Houdini to change runtimes.
+The update script places the current depth-capable DLL under a content-hash filename. `-SetDefault` records an ignored fallback profile. An explicit `-RuntimeConfig`, `HDUE_RUNTIME_CONFIG`, or the local `runtime_config` key takes priority over that fallback. Restart Houdini to change runtimes.
 
 The launcher registers `Unreal Engine (hdUE)` for its process without editing the user's Houdini environment file. It creates a source layer and an `hdUE_settings` subnet. Lumen is the default mode; Path Tracer defaults to 64 samples. Standard tumble, pan, and dolly controls are used. A secondary image window is optional.
 
@@ -169,7 +174,7 @@ Rendering currently connects these textures to base color. Direct MaterialX Imag
 
 The backend uses Substrate with Adaptive GBuffer, up to four closures and 128 bytes per pixel. Generic PBR materials use a Substrate Slab.
 
-Full MaterialX rendering uses UE's editor-side Interchange importer to create native Substrate materials, followed by cook and staging. The runtime does not load USD or MaterialX importers. The usdview integration maps source materials to prepared native assets and applies supported public parameter edits.
+Prepared MaterialX rendering uses UE's editor-side Interchange importer to create native Substrate materials, followed by cook and staging. The runtime does not load USD or MaterialX importers. The usdview integration maps source materials to prepared native assets and applies supported public parameter edits.
 
 ```powershell
 .\scripts\Import-MaterialX.ps1 `
