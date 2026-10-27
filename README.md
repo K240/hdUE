@@ -4,6 +4,31 @@ hdUE is a Windows x64 proof of concept for rendering OpenUSD scenes with Unreal 
 
 This repository contains the delegate, backend source, build scripts, synthetic samples, and tests. Local SDK installations, private projects, supplied content, generated runtimes, and machine-specific configuration are excluded. See [VERIFICATION.md](VERIFICATION.md) for validation coverage.
 
+## System architecture
+
+```mermaid
+flowchart LR
+    subgraph Process["Single host process"]
+        Host["Hydra host<br/>CLI / usdview / Houdini Solaris"]
+        Delegate["hdUE delegate<br/>Scene batching / CPU AOV buffers"]
+        Backend["UE backend DLL<br/>UELibrary / World / GPU readback"]
+
+        Host -->|"Hydra scene synchronization"| Delegate
+        Delegate -->|"Versioned C ABI<br/>Scene updates / render requests"| Backend
+        Backend -->|"Completed CPU frames<br/>Frame ID / generation"| Delegate
+        Delegate -->|"Color / optional depth AOVs"| Host
+        Host -.->|"Owner-thread Init / Tick / Shutdown"| Backend
+    end
+
+    GPU["GPU via D3D12<br/>Lumen / Path Tracer"]
+    Backend -->|"Render commands"| GPU
+    GPU -->|"Asynchronous readback"| Backend
+```
+
+The host, delegate, and UE runtime share one process. The C ABI passes fixed-width data, handles, and caller-owned buffers. The host owns UE's lifetime; destroying a delegate releases its scene resources without restarting UE.
+
+Hydra changes are batched and applied on the UE owner thread. Rendering and readback run asynchronously, and the delegate publishes completed frames without waiting for another Tick. Frame IDs and generation numbers prevent stale results from being presented as current. Solaris consumes both color and linear depth; the standalone path uses color by default.
+
 ## Requirements
 
 - Unreal Engine **5.8.4** source: tag `5.8.4-release`, commit `f45729c0b6f097038e72b52d366a62baeca3275b`.
