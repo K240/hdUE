@@ -5,7 +5,7 @@ param(
     [string]$LogDirectory='',
     [string]$BuildDirectory='',
     [string]$MaterialXLibrary='',
-    [ValidateSet('integration','viewport','optextures','materials','lighting')][string]$TestKind='integration',
+    [ValidateSet('integration','viewport','optextures','materials','lighting','references')][string]$TestKind='integration',
     [switch]$Test
 )
 $ErrorActionPreference='Stop'

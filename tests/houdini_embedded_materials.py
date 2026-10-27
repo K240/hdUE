@@ -7,7 +7,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import hou
-from pxr import Sdf, Usd, UsdGeom, UsdShade, UsdLux
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade, UsdLux
 
 root=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(root/'scripts'),str(root/'integrations/houdini/python3.13libs')]
@@ -51,6 +51,10 @@ with tempfile.TemporaryDirectory(prefix='hdue-embedded-test-') as directory:
     shader.CreateInput('base_color',Sdf.ValueTypeNames.Color3f).ConnectToSource(image.ConnectableAPI(),'out')
     shader.CreateOutput('out',Sdf.ValueTypeNames.Token)
     material.CreateSurfaceOutput('mtlx').ConnectToSource(shader.ConnectableAPI(),'out')
+    mesh=UsdGeom.Mesh.Define(stage,'/Asset/Geometry')
+    mesh.CreatePointsAttr([(0,0,0),(1,0,0),(0,1,0)])
+    mesh.CreateFaceVertexCountsAttr([3]); mesh.CreateFaceVertexIndicesAttr([0,1,2])
+    UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(material)
     environment=(root/'samples/lighting/environment.hdr').read_bytes()
     definition.addSection('environment.hdr',environment)
     sky_uri='opdef:/Sop/hdue_embedded_fixture?environment.hdr'
@@ -122,6 +126,43 @@ with tempfile.TemporaryDirectory(prefix='hdue-embedded-test-') as directory:
     prepared=integration.settings_node(lop)
     assert not prepared.errors(),prepared.errors()
     assert not prepared.stage().GetPrimAtPath('/Referenced').IsInstance()
+    # References created after the settings subnet must also pass through
+    # preparation at the final displayed output, including subsequent edits.
+    downstream=lop.parent().createNode('reference','downstream_instance')
+    downstream.setInput(0,prepared)
+    downstream.parm('filepath1').set(str(source))
+    downstream.parm('primpath1').set('/Shot/Asset')
+    downstream.parm('instanceable1').set(1)
+    edit=lop.parent().createNode('pythonscript','parent_transform')
+    edit.setInput(0,downstream)
+    def translate(value):
+        edit.parm('python').set('from pxr import UsdGeom\nstage=hou.pwd().editableStage()\n'
+            +'UsdGeom.Xformable(stage.GetPrimAtPath("/Shot/Asset")).AddTranslateOp(opSuffix="test").Set(('+str(value)+',0,0))')
+    translate(2)
+    assert edit.stage().GetPrimAtPath('/Shot/Asset').IsInstance()
+    from hdue_preparation import ViewportPreparation
+    output=ViewportPreparation()
+    final=output.ensure(edit,prepared)
+    assert not final.errors(),final.errors()
+    assert not final.stage().GetPrimAtPath('/Shot/Asset').IsInstance()
+    assert edit.stage().GetPrimAtPath('/Shot/Asset').IsInstance()
+    assert final.stage().GetAttributeAtPath('/Shot/Asset/Looks/Paint/Image.inputs:file').Get().path!=uri
+    geometry=final.stage().GetPrimAtPath('/Shot/Asset/Geometry')
+    assert Gf.IsClose(UsdGeom.Xformable(geometry).ComputeLocalToWorldTransform(Usd.TimeCode.Default()).ExtractTranslation(),Gf.Vec3d(2,0,0),1e-9)
+    translate(5); output.ensure(final,prepared)
+    geometry=final.stage().GetPrimAtPath('/Shot/Asset/Geometry')
+    assert Gf.IsClose(UsdGeom.Xformable(geometry).ComputeLocalToWorldTransform(Usd.TimeCode.Default()).ExtractTranslation(),Gf.Vec3d(5,0,0),1e-9)
+    appended=lop.parent().createNode('pythonscript','edit_prepared_output')
+    appended.setInput(0,final)
+    appended.parm('python').set('stage=hou.pwd().editableStage()')
+    final=output.ensure(appended,prepared)
+    assert appended.inputs()[0]==edit # no cycle or lost artist edit
+    assert not final.stage().GetPrimAtPath('/Shot/Asset').IsInstance()
+    assert hashlib.sha256(source.read_bytes()).hexdigest()==digest
+    adopted=ViewportPreparation(); adopted.ensure(final,prepared)
+    assert adopted.node==final
+    adopted.close(); output.node=None
+    assert appended.isDisplayFlagSet()
     assert lop.stage().GetPrimAtPath('/Referenced').IsInstance()
     cache.close()
     from hdue_op_textures import close

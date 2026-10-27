@@ -52,6 +52,8 @@ class Host:
         self.api=Viewport(self.runtime,os.environ.get('HDUE_HOUDINI_PLUGIN',str(ROOT/'build/houdini-22.0.466/Release/hdUE_Houdini22.dll')))
         from hdue_materialx import PreparedMaterials
         self.prepared_materials=PreparedMaterials()
+        from hdue_preparation import ViewportPreparation
+        self.prepared_output=ViewportPreparation()
         self.material_error=None
         self.last_materials=0.
         self.viewer=None
@@ -89,16 +91,28 @@ class Host:
                 if time.monotonic()-self.last_textures>.25:
                     self.last_textures=time.monotonic()
                     from hdue_op_textures import cache,refresh
-                    bridge=node.node('asset_bridge')
-                    if bridge and cache().dirty(bridge):
-                        try:
+                    try:
+                        viewer=scene_viewer()
+                        preparation_revision=self.prepared_output.revision
+                        refreshed=False
+                        if viewer.currentHydraRenderer() in (LABEL,PLUGIN):
+                            network=viewer.pwd()
+                            display=network.displayNode() if isinstance(network,hou.LopNetwork) else viewer.currentNode()
+                            self.prepared_output.ensure(display,node)
+                        else:
+                            self.prepared_output.close()
+                        bridge=node.node('asset_bridge')
+                        if bridge and cache().dirty(bridge):
                             refresh(bridge)
-                            error='; '.join(bridge.errors()) or None
-                        except (hou.Error,ValueError,RuntimeError) as failure:
-                            error=str(failure)
-                        if error and error!=self.texture_error: _report(error)
-                        self.texture_error=error
-                        scene_viewer().curViewport().draw()
+                            refreshed=True
+                            if bridge.errors(): raise ValueError('; '.join(bridge.errors()))
+                        if refreshed or preparation_revision!=self.prepared_output.revision:
+                            viewer.curViewport().draw()
+                        error=None
+                    except (hou.Error,ValueError,RuntimeError) as failure:
+                        error=str(failure)
+                    if error and error!=self.texture_error: _report(error)
+                    self.texture_error=error
                 if state['active']:
                     stage=scene_viewer().stage()
                     if stage:
@@ -115,6 +129,8 @@ class Host:
                                  UsdGeom.GetStageMetersPerUnit(stage),UsdGeom.GetStageUpAxis(stage)=='Z',hou.frame()/hou.fps())
                         if options!=self.last_options and self.api.options(*options[1:]):
                             self.last_options=options; scene_viewer().curViewport().draw()
+            elif self.prepared_output.node is not None:
+                self.prepared_output.close()
             self.runtime.tick()
             if self.viewer:
                 if state['error']: self.viewer.status.setText(state['error'])
@@ -145,6 +161,7 @@ class Host:
         except BaseException: _report(traceback.format_exc())
         if self.viewer: self.viewer.hide()
         self.runtime.close()
+        self.prepared_output.close()
         from hdue_op_textures import close
         close()
         self.closed=True; self.write_state()
@@ -159,7 +176,10 @@ def start():
         if input_usd: open_usd(input_usd)
         test=os.environ.get('HDUE_HOUDINI_TEST')
         if test:
-            if test=='lighting':
+            if test=='references':
+                import hdue_reference_test
+                hdue_reference_test.start(_host)
+            elif test=='lighting':
                 import hdue_lighting_test
                 hdue_lighting_test.start(_host)
             elif test=='materials':
@@ -210,7 +230,8 @@ def current_settings_node():
     if viewer is None: return None
     network=viewer.pwd()
     node=network.displayNode() if isinstance(network,hou.LopNetwork) else viewer.currentNode()
-    while node and not node.parm('hdue_mode'):
+    from hdue_preparation import TAG
+    while node and (not node.parm('hdue_mode') or node.userData(TAG)=='1'):
         inputs=node.inputs(); node=inputs[0] if inputs else None
     return node
 
@@ -264,11 +285,18 @@ def normalize(node):
     stage=node.editableStage()
     # Hydra instancing is not implemented. Expand references only in this
     # generated layer so subsets and shaders inside instances remain editable.
+    expand_references(stage)
+    normalize_stage(stage,node.evalParm('hdue_source_axis'),node.evalParm('hdue_source_units'))
+
+def expand_references(stage):
     while True:
         instances=[prim for prim in stage.Traverse() if prim.IsInstance()]
         if not instances: break
         for prim in instances: prim.SetInstanceable(False)
-    normalize_stage(stage,node.evalParm('hdue_source_axis'),node.evalParm('hdue_source_units'))
+
+def prepare_viewport(node):
+    expand_references(node.editableStage())
+    cook(node)
 
 def cook(node):
     stage=node.editableStage()

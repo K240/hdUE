@@ -81,6 +81,8 @@ Owned fixtures cover Standard Surface, OpenPBR, metal, coat, anisotropy, transmi
 
 The optional Solaris `materials` test kind consumes a caller-selected USD and cooked library. It checks native material/texture statistics, Lumen and 64-sample Path Tracer images, real compositor captures, ABI/thread/session validation, subset rebinding/removal/restoration, and normal engine shutdown. Input assets and evidence remain local and ignored.
 
+The `references` test kind references a caller-selected prepared asset downstream of `hdUE_settings` with instanceability enabled. It checks remapped native MaterialX bindings and textures, parent-transform changes in real-time and 64-sample Path Tracer output, and changed depth pixels to distinguish geometry movement from sampling noise. Owned headless HDA tests also cover final-output expansion, unchanged upstream instancing/source bytes, live transform recooks, appending edits to generated output without cycles, and adopting/cleaning a saved preparation node.
+
 These checks establish binding and converged finite images; they do not assert pixel-identical subsurface scattering between Lumen and Path Tracer.
 
 `Test-MaterialX.ps1` checks public parameter edits, material changes, image comparisons, invalid updates, source preservation, renderer re-creation, and shutdown. Graph validation rejects cycles, unknown nodes, incompatible connections/types, missing images, nonfinite values, and unsupported volume/displacement outputs.

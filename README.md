@@ -178,6 +178,8 @@ hdefereval.execute_deferred(connect_hdue)
 
 The deferred call runs on the UI owner thread. Selecting the renderer alone does not prepare a LOP network.
 
+When Reference or Edit LOPs are added after `hdUE_settings`, the host places an `hdUE_viewport_prepare` LOP after the displayed output. This final layer expands instanceable references and resolves embedded/COP images before material binding and Hydra translation. Transforms on the reference prim and its ancestors continue through the same layer. The artist's input layers and referenced files retain their original instancing and attributes. The generated LOP follows display-output changes and is removed when switching renderers or closing the host; connections through it are preserved.
+
 Color and real UE depth share a frame ID and generation. Solaris receives linear axial depth in stage units with `depthstyle: linear`. The current target is one active hdUE viewport with a centered perspective camera. Standard selection outlines, ID AOVs, precise native viewport picking, husk, and USD Render ROP integration are not implemented. Use the Scene Graph Tree for prim selection and editing.
 
 ### COP textures
