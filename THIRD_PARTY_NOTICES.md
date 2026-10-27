@@ -18,16 +18,16 @@ Unreal Engine is governed by the [Unreal Engine End User License Agreement](http
 
 | Component | Use in hdUE | License reference |
 | --- | --- | --- |
-| Unreal Engine 5.8.4 | Embedded rendering backend and asset preparation | [Epic EULA](https://www.unrealengine.com/eula/unreal) |
+| Unreal Engine | Embedded rendering backend and asset preparation | [Epic EULA](https://www.unrealengine.com/eula/unreal) |
 | Houdini and its SDK | Optional Solaris viewport integration | [SideFX license agreement](https://www.sidefx.com/legal/license-agreement/) and terms supplied with the installation |
-| OpenUSD 26.03; Houdini-supplied USD 26.05 | Hydra delegate and scene processing | [OpenUSD 26.03 license and component notices](https://github.com/PixarAnimationStudios/OpenUSD/blob/v26.03/LICENSE.txt), including the Tomorrow Open Source Technology License 1.0; use the notices supplied with Houdini for its USD build |
-| MaterialX 1.39.4 | Material graph export and conversion utilities | [Apache License 2.0](https://github.com/AcademySoftwareFoundation/MaterialX/blob/v1.39.4/LICENSE) and accompanying upstream notices |
-| PySide6 6.8.3 / Qt | Optional usdview user interface | [Qt for Python licensing](https://doc.qt.io/qtforpython-6.8/commercial/index.html): LGPLv3/GPLv3 community or commercial terms, as applicable; also see [component notices](https://doc.qt.io/qtforpython-6.8/licenses.html) |
-| PyOpenGL 3.1.9 | Optional usdview OpenGL integration | [Upstream license collection](https://github.com/mcfletch/pyopengl/blob/master/license.txt), including BSD-style licenses; retain the collection supplied with the installed release |
-| NumPy 2.2.6 | Optional usdview numerical utilities | [BSD 3-Clause license](https://github.com/numpy/numpy/blob/v2.2.6/LICENSE.txt) and additional notices supplied with the selected binary package |
+| OpenUSD; Houdini-supplied USD | Hydra delegate and scene processing | [OpenUSD license and component notices](https://github.com/PixarAnimationStudios/OpenUSD/blob/release/LICENSE.txt), including the Tomorrow Open Source Technology License 1.0; use the notices supplied with Houdini for its USD build |
+| MaterialX | Material graph export and conversion utilities | [Apache License 2.0](https://github.com/AcademySoftwareFoundation/MaterialX/blob/main/LICENSE) and accompanying upstream notices |
+| PySide6 / Qt | Optional usdview user interface | [Qt licensing](https://www.qt.io/licensing): LGPLv3/GPLv3 community or commercial terms, as applicable; also see [Qt for Python component notices](https://doc.qt.io/qtforpython/licenses.html) |
+| PyOpenGL | Optional usdview OpenGL integration | [Upstream license collection](https://github.com/mcfletch/pyopengl/blob/master/license.txt), including BSD-style licenses; retain the collection supplied with the installed release |
+| NumPy | Optional usdview numerical utilities | [BSD 3-Clause license](https://github.com/numpy/numpy/blob/main/LICENSE.txt) and additional notices supplied with the selected binary package |
 | Python | Utility scripts and host integration | [Python Software Foundation License Version 2 and incorporated-software notices](https://docs.python.org/3/license.html), as supplied with the selected runtime |
 
-SDK-provided packages can differ from the standalone script versions above. Their installed license files and notices apply. Build tools and platform SDKs also retain their respective terms.
+SDK-provided packages can differ from standalone dependencies. The license files and notices supplied with each installed package apply. Build tools and platform SDKs also retain their respective terms.
 
 ## Redistribution
 
